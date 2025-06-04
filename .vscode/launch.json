@@ -1,0 +1,29 @@
+// .vscode/launch.json
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "🛠 Debug",
+        "type": "debugpy",
+        "request": "launch",
+        // Equivalente a: python -m experiments.main
+
+        // "module": "experiments.main",
+        // "module": "tools.create_dist_matrix",
+       "module": "tools.visualize_data",
+
+        // Directorio raíz del proyecto que contiene lib/ y experiments/
+        "cwd": "${workspaceFolder}",
+        "console": "integratedTerminal",
+        "env": {
+          // Añade project_root a sys.path para que importe lib/
+          "PYTHONPATH": "${workspaceFolder}",
+          "CUDA_VISIBLE_DEVICES": "0",
+        },
+        "justMyCode": false,
+        "args": [
+        ]
+      }
+    ]
+  }
+  

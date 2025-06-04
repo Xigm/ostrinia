@@ -1,0 +1,4 @@
+/config/wandb/keys.yaml
+logs
+*csv
+*.npy
