@@ -1,19 +1,19 @@
-wandb:
-  sweep:
-    method: random
-    metric:
-      name: val_loss
-      goal: minimize
-    parameters:
-      batch_size:
-        values: [16, 32, 64, 128]
-      learning_rate:
-        values: [0.0001, 0.0005, 0.001, 0.005]
-      epochs:
-        values: [10, 20, 30]
-      model_type:
-        values: ['resnet', 'vgg', 'inception']
-      dropout_rate:
-        values: [0.1, 0.2, 0.3]
-      weight_decay:
-        values: [0.0001, 0.0005, 0.001]
+# @package wandb  
+sweep:
+  method: random
+  metric:
+    name: val_loss
+    goal: minimize
+  parameters:
+    batch_size:
+      values: [16, 32, 64, 128]
+    learning_rate:
+      values: [0.0001, 0.0005, 0.001, 0.005]
+    epochs:
+      values: [10, 20, 30]
+    model_type:
+      values: ['resnet', 'vgg', 'inception']
+    dropout_rate:
+      values: [0.1, 0.2, 0.3]
+    weight_decay:
+      values: [0.0001, 0.0005, 0.001]

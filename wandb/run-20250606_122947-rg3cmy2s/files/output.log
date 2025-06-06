@@ -1,0 +1,2 @@
+[2025-06-06 12:29:48,537][tsl][INFO] - Fit and set scaler for target: StandardScaler(bias=(1, 1, 1), scale=(1, 1, 1))
+Error executing job with overrides: ['model=dcrnn', 'dataset=ostrinia']

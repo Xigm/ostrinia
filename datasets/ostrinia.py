@@ -44,6 +44,8 @@ class Ostrinia(DatetimeDataset):
         path = os.path.join(self.root_dir, 'ostrinia_distance_matrix.npy')
         dist = np.load(path)
 
+        # convert distance matrix to edge list and edge weights
+
         # load coordinates
         coords_path = os.path.join(self.root_dir, 'ostrinia_coordinate_pairs.npy')
         coords = np.load(coords_path)
@@ -87,6 +89,30 @@ class Ostrinia(DatetimeDataset):
         return df_clean, dist, mask
 
 
+    def get_connectivity(self, layout, **kwargs):
+        """
+        Get the connectivity matrix for the dataset.
+        
+        Returns:
+            np.ndarray: The connectivity matrix.
+        """
+        if layout == 'edge_index':
+            from tsl.ops.connectivity import adj_to_edge_index
+            return adj_to_edge_index(self._covariates['dist']['value'])
+        elif layout == 'distance':
+            dist = self._covariates['dist']['value']
+        return dist
+
+    # def set_connectivity(self, connectivity):
+    #     """
+    #     Set the connectivity matrix for the dataset.
+        
+    #     Parameters:
+    #         connectivity (np.ndarray): The new connectivity matrix.
+    #     """
+    #     self.edge_index, self.edge_weight = self._parse_connectivity(
+    #         connectivity, 'edge_index')
+        
 
 def map_to_nearest_coords(df, coord_list):
     """
@@ -124,3 +150,4 @@ def map_to_nearest_coords(df, coord_list):
     df['error_distance'] = distances_km
 
     return df
+

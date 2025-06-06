@@ -1,8 +1,0 @@
-default: null
-model:
-  name: testing
-  type: test_model
-  params:
-    param1: value1
-    param2: 42
-    param3: truesss

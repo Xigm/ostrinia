@@ -8,13 +8,14 @@
         "request": "launch",
         // Equivalente a: python -m experiments.main
 
-        // "module": "experiments.main",
+        "module": "experiments.main",
         // "module": "tools.create_dist_matrix",
-       "module": "tools.visualize_data",
+      //  "module": "tools.visualize_data",
 
         // Directorio raíz del proyecto que contiene lib/ y experiments/
         "cwd": "${workspaceFolder}",
         "console": "integratedTerminal",
+        "CUDA_VISIBLE_DEVICES": "0",
         "env": {
           // Añade project_root a sys.path para que importe lib/
           "PYTHONPATH": "${workspaceFolder}",
@@ -22,6 +23,8 @@
         },
         "justMyCode": false,
         "args": [
+          "model=dcrnn",
+          "dataset=ostrinia"
         ]
       }
     ]

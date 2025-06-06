@@ -1,0 +1,16 @@
+
+name: ostrinia
+target: "nb_ostrinia"
+window: 12
+horizon: 6
+stride: 1
+splitting:
+  val_len: 0.1
+  test_len: 0.2
+connectivity:
+  method: distance
+  threshold: 0.1
+  include_self: False
+  layout: edge_index
+
+log_metrics: ["mae", "mae_at_3_days", "mae_at_6_days", "mre", "mse"]

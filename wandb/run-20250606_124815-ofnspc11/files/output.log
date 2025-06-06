@@ -1,0 +1,4 @@
+[2025-06-06 12:48:16,415][tsl][INFO] - Fit and set scaler for target: StandardScaler(bias=(1, 1, 1), scale=(1, 1, 1))
+/home/mnogales/miniconda3/envs/taming-env/lib/python3.10/site-packages/pytorch_lightning/utilities/parsing.py:197: UserWarning: Attribute 'model_class' is an instance of `nn.Module` and is already saved during checkpointing. It is recommended to ignore them using `self.save_hyperparameters(ignore=['model_class'])`.
+  rank_zero_warn(
+Error executing job with overrides: ['model=dcrnn', 'dataset=ostrinia']

@@ -1,9 +1,11 @@
 defaults:
-  - wandb: keys
-  - wandb: sweep
-  - model: default
+  - _self_
+  - wandb :
+    - sweep
+    - keys
   - optimizer: default
   - dataset: ostrinia
+  - model: dummy
 
 #### Experiment params ########################################################
 hydra:
@@ -16,14 +18,16 @@ hydra:
 workers: 0
 num_threads: 1
 
+run_dir: logs/${model.name}/${dataset.name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
+run_name: ${now:%Y-%m-%d_%H-%M-%S}_${hydra:job.num}
+
 #### Training params ##########################################################
-epochs: 200
+epochs: 20
 patience: 50
 batch_size: 16
 train_batches: 1.0
+
 grad_clip_val: 3
 scale_axis: graph
 
-mdoel:
-  name: dcrnn
 

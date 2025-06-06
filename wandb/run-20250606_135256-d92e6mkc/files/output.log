@@ -1,0 +1,54 @@
+[2025-06-06 13:52:57,562][tsl][INFO] - Fit and set scaler for target: StandardScaler(bias=(1, 1, 1), scale=(1, 1, 1))
+[34m[1mwandb[0m: wandb.init() called while a run is active and reinit is set to 'default', so returning the previous run.
+GPU available: True (cuda), used: True
+TPU available: False, using: 0 TPU cores
+IPU available: False, using: 0 IPUs
+HPU available: False, using: 0 HPUs
+`Trainer(limit_train_batches=1.0)` was configured so 100% of the batches per epoch will be used..
+/home/mnogales/miniconda3/envs/taming-env/lib/python3.10/site-packages/pytorch_lightning/callbacks/model_checkpoint.py:617: UserWarning: Checkpoint directory logs/dcrnn/ostrinia/2025-06-06/13-52-55 exists and is not empty.
+  rank_zero_warn(f"Checkpoint directory {dirpath} exists and is not empty.")
+LOCAL_RANK: 0 - CUDA_VISIBLE_DEVICES: [0]
+
+  | Name          | Type             | Params
+---------------------------------------------------
+0 | loss_fn       | MaskedMAE        | 0
+1 | train_metrics | MetricCollection | 0
+2 | val_metrics   | MetricCollection | 0
+3 | test_metrics  | MetricCollection | 0
+4 | model         | DCRNNModel       | 141 K
+---------------------------------------------------
+141 K     Trainable params
+0         Non-trainable params
+141 K     Total params
+0.566     Total estimated model params size (MB)
+Sanity Checking DataLoader 0:   0%|                                                                                                                                                                                                                               | 0/2 [00:00<?, ?it/s][2025-06-06 13:52:58,898][tsl][WARNING] - Only args ['edge_index', 'edge_weight', 'x'] are forwarded to the model (DCRNNModel).
+/home/mnogales/miniconda3/envs/taming-env/lib/python3.10/site-packages/pytorch_lightning/core/module.py:490: UserWarning: You called `self.log('val_mae', ..., logger=True)` but have no logger configured. You can enable one by doing `Trainer(logger=ALogger(...))`
+  rank_zero_warn(
+/home/mnogales/miniconda3/envs/taming-env/lib/python3.10/site-packages/pytorch_lightning/core/module.py:490: UserWarning: You called `self.log('val_mae_at_12_days', ..., logger=True)` but have no logger configured. You can enable one by doing `Trainer(logger=ALogger(...))`
+  rank_zero_warn(
+/home/mnogales/miniconda3/envs/taming-env/lib/python3.10/site-packages/pytorch_lightning/core/module.py:490: UserWarning: You called `self.log('val_mae_at_3_days', ..., logger=True)` but have no logger configured. You can enable one by doing `Trainer(logger=ALogger(...))`
+  rank_zero_warn(
+/home/mnogales/miniconda3/envs/taming-env/lib/python3.10/site-packages/pytorch_lightning/core/module.py:490: UserWarning: You called `self.log('val_mae_at_6_days', ..., logger=True)` but have no logger configured. You can enable one by doing `Trainer(logger=ALogger(...))`
+  rank_zero_warn(
+/home/mnogales/miniconda3/envs/taming-env/lib/python3.10/site-packages/pytorch_lightning/core/module.py:490: UserWarning: You called `self.log('val_mre', ..., logger=True)` but have no logger configured. You can enable one by doing `Trainer(logger=ALogger(...))`
+  rank_zero_warn(
+/home/mnogales/miniconda3/envs/taming-env/lib/python3.10/site-packages/pytorch_lightning/core/module.py:490: UserWarning: You called `self.log('val_mse', ..., logger=True)` but have no logger configured. You can enable one by doing `Trainer(logger=ALogger(...))`
+  rank_zero_warn(
+/home/mnogales/miniconda3/envs/taming-env/lib/python3.10/site-packages/pytorch_lightning/core/module.py:490: UserWarning: You called `self.log('val_loss', ..., logger=True)` but have no logger configured. You can enable one by doing `Trainer(logger=ALogger(...))`
+  rank_zero_warn(
+Epoch 13:   0%| | 0/57 [00:00<?, ?it/s, val_mae=0.617, val_mae_at_12_days=0.000, val_mae_at_3_days=0.639, val_mae_at_6_days=0.440, val_mre=1.010, val_mse=12.50, train_mae=1.220, train_mae_at_12_days=0.000, train_mae_at_3_days=1.210, train_mae_at_6_days=1.230, train_mre=1.020, tra
+/home/mnogales/miniconda3/envs/taming-env/lib/python3.10/site-packages/pytorch_lightning/core/module.py:490: UserWarning: You called `self.log('train_mae', ..., logger=True)` but have no logger configured. You can enable one by doing `Trainer(logger=ALogger(...))`
+  rank_zero_warn(
+/home/mnogales/miniconda3/envs/taming-env/lib/python3.10/site-packages/pytorch_lightning/core/module.py:490: UserWarning: You called `self.log('train_mae_at_12_days', ..., logger=True)` but have no logger configured. You can enable one by doing `Trainer(logger=ALogger(...))`
+  rank_zero_warn(
+/home/mnogales/miniconda3/envs/taming-env/lib/python3.10/site-packages/pytorch_lightning/core/module.py:490: UserWarning: You called `self.log('train_mae_at_3_days', ..., logger=True)` but have no logger configured. You can enable one by doing `Trainer(logger=ALogger(...))`
+  rank_zero_warn(
+/home/mnogales/miniconda3/envs/taming-env/lib/python3.10/site-packages/pytorch_lightning/core/module.py:490: UserWarning: You called `self.log('train_mae_at_6_days', ..., logger=True)` but have no logger configured. You can enable one by doing `Trainer(logger=ALogger(...))`
+  rank_zero_warn(
+/home/mnogales/miniconda3/envs/taming-env/lib/python3.10/site-packages/pytorch_lightning/core/module.py:490: UserWarning: You called `self.log('train_mre', ..., logger=True)` but have no logger configured. You can enable one by doing `Trainer(logger=ALogger(...))`
+  rank_zero_warn(
+/home/mnogales/miniconda3/envs/taming-env/lib/python3.10/site-packages/pytorch_lightning/core/module.py:490: UserWarning: You called `self.log('train_mse', ..., logger=True)` but have no logger configured. You can enable one by doing `Trainer(logger=ALogger(...))`
+  rank_zero_warn(
+/home/mnogales/miniconda3/envs/taming-env/lib/python3.10/site-packages/pytorch_lightning/core/module.py:490: UserWarning: You called `self.log('train_loss', ..., logger=True)` but have no logger configured. You can enable one by doing `Trainer(logger=ALogger(...))`
+  rank_zero_warn(
+                                                                                                                                                                                                                                                                                        

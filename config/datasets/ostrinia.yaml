@@ -1,8 +1,0 @@
-dataset:
-  target: "nb_ostrinia"
-  window: 12
-  horizon: 6
-  stride: 1
-  splitting:
-    val_len: 0.1
-    test_len: 0.2

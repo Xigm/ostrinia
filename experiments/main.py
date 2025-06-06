@@ -8,12 +8,19 @@ from tsl.metrics import torch_metrics
 
 from datasets.ostrinia import Ostrinia
 
-from models.dcrnn import dcrnn
-from models.predictor import Predictor
+from models.dcrnn import DCRNNModel
+from extras.predictor import WrapPredictor
+from extras.metrics_logging import MetricsLogger
+from extras.callbacks import Wandb_callback, MetricsHistory
+
+from pytorch_lightning import Trainer
+from pytorch_lightning.loggers import TensorBoardLogger
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+
 
 def get_model(name):
     if name == 'dcrnn':
-        return dcrnn
+        return DCRNNModel
     else:
         raise NotImplementedError(f"Model {name} is not implemented.")
     
@@ -32,16 +39,16 @@ def build_cfg(cfg: DictConfig):
     optimizer_cfg = hydra.compose(config_name=optimizer_config_path)
     print(f"Loaded configuration for optimizer {optimizer_name}: {optimizer_cfg}")
 
-@hydra.main(version_base=None, config_path="../config", config_name="config")
+@hydra.main(version_base=None, config_path="../config", config_name="default")
 def main(cfg: DictConfig):
-    
+
     if cfg.wandb.enable:
         wandb.init(
             project=cfg.wandb.project,
             entity=cfg.wandb.entity,
             config=OmegaConf.to_container(cfg.model, resolve=True),
             name=cfg.wandb.name,
-            mode=cfg.wandb.mode
+            # mode=cfg.wandb.mode
         )
 
     # Compute covariates
@@ -69,12 +76,17 @@ def main(cfg: DictConfig):
     data_module = SpatioTemporalDataModule(
         dataset=torch_dataset,
         scalers=transform,
-        batch_size=cfg.dataset.batch_size,
-        num_workers=cfg.dataset.num_workers,
+        batch_size=cfg.optimizer.batch_size,
+        workers=cfg.optimizer.num_workers,
         splitter=dataset.get_splitter(**cfg.dataset.splitting),
     )
 
     data_module.setup()
+
+    adj = dataset.get_connectivity(**cfg.dataset.connectivity,
+                                   train_slice=data_module.train_slice)
+    
+    data_module.torch_dataset.set_connectivity(adj)
 
     ######################################
     # Model Initialization
@@ -89,8 +101,6 @@ def main(cfg: DictConfig):
                         embedding_cfg=cfg.get('embedding'), #### changed from None to embedding_cfg
                         horizon=torch_dataset.horizon)
     
-    model = model(**model_kwargs)
-
     model.filter_model_args_(model_kwargs)
 
     model_kwargs.update(cfg.model.hparams)
@@ -100,13 +110,12 @@ def main(cfg: DictConfig):
     ########################################
 
     loss_fn = torch_metrics.MaskedMAE(compute_on_step=True)
+    
+    log_list = cfg.dataset.log_metrics
 
-    log_metrics = {'mae': torch_metrics.MaskedMAE(),
-                   "mae_at_3_days": torch_metrics.MaskedMAE(at=2),
-                   "mae_at_6_days": torch_metrics.MaskedMAE(at=5),
-                   "mae_at_12_days": torch_metrics.MaskedMAE(at=11),
-                   'mre': torch_metrics.MaskedMRE(),
-                   'mse': torch_metrics.MaskedMSE()}
+    log_metrics = MetricsLogger()
+
+    metrics = log_metrics.filter_metrics(log_list)
 
     if cfg.get('lr_scheduler') is not None:
         scheduler_class = getattr(torch.optim.lr_scheduler,
@@ -116,25 +125,89 @@ def main(cfg: DictConfig):
         scheduler_class = scheduler_kwargs = None
 
     # setup predictor
-    predictor = Predictor(
+    predictor = WrapPredictor(
         model_class=model,
         model_kwargs=model_kwargs,
         optim_class=getattr(torch.optim, cfg.optimizer.name),
         optim_kwargs=dict(cfg.optimizer.hparams),
         loss_fn=loss_fn,
-        metrics=log_metrics,
-        beta=cfg_to_python(cfg.regularization_weight),
-        embedding_var=cfg.embedding.get('initial_var', 0.2),
+        metrics=metrics,
         scheduler_class=scheduler_class,
         scheduler_kwargs=scheduler_kwargs,
-        scale_target=cfg.scale_target,
     )
 
+    exp_logger = TensorBoardLogger(save_dir=cfg.run_dir, name=cfg.run_name)
     
     ######################################
-    # Optimizer Initialization
+    # Training and Setting up
     ######################################
+
+    early_stop_callback = EarlyStopping(
+        monitor='val_mae',
+        patience=cfg.patience,
+        mode='min'
+    )
+
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=cfg.run_dir,
+        save_top_k=1,
+        monitor='val_mae',
+        mode='min',
+    )
     
+
+    run = wandb.init(
+                # Set the wandb entity where your project will be logged (generally your team name).
+                entity=cfg.wandb.entity,
+                # Set the wandb project where this run will be logged.
+                project=cfg.wandb.project,
+                # Track hyperparameters and run metadata.
+                config={
+                    "learning_rate": cfg.optimizer.hparams.lr,
+                    "batch_size": cfg.batch_size,
+                    "model": cfg.model.name,
+                    "optimizer": cfg.optimizer.name,
+                    "hidden_size": cfg.model.hparams.hidden_size,
+                    "dropout": cfg.model.hparams.dropout,
+                    "regularization_weight": cfg.get('regularization_weight', 0.0),
+                    "dataset": cfg.dataset.name,
+                    "epochs": cfg.epochs,
+                    "window": cfg.dataset.window,
+                    "horizon": cfg.dataset.horizon
+                },
+            )
+    
+    wandb_logger_callback = Wandb_callback(
+        log_dir=cfg.run_dir,
+        run=run,
+        log_metrics=log_list,
+    )
+
+    trainer = Trainer(max_epochs=cfg.epochs,
+                      limit_train_batches=cfg.train_batches,
+                      default_root_dir=cfg.run_dir,
+                      logger=exp_logger,  # Disable default logger
+                      accelerator='gpu' if torch.cuda.is_available() else 'cpu',
+                    #   devices=,
+                      gradient_clip_val=cfg.grad_clip_val,
+                      callbacks=[early_stop_callback, checkpoint_callback, wandb_logger_callback])
+
+    load_model_path = cfg.get('load_model_path')
+    if load_model_path is not None:
+        predictor.load_model(load_model_path)
+    else:
+        trainer.fit(predictor, train_dataloaders=data_module.train_dataloader(),
+                    val_dataloaders=data_module.val_dataloader())
+        predictor.load_model(checkpoint_callback.best_model_path)
+
+    ########################################
+    # testing                              #
+    ########################################
+
+    predictor.freeze()
+    trainer.test(predictor, dataloaders=data_module.test_dataloader())
+    
+    exp_logger.finalize('success')
     
 
 if __name__ == "__main__":
