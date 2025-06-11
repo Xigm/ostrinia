@@ -18,6 +18,10 @@ from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 
+import yaml
+from colorama import Fore, Style, init
+init()
+
 
 def get_model(name):
     if name == 'dcrnn':
@@ -43,14 +47,7 @@ def build_cfg(cfg: DictConfig):
 @hydra.main(version_base=None, config_path="../config", config_name="default")
 def main(cfg: DictConfig):
 
-    if cfg.wandb.enable:
-        wandb.init(
-            project=cfg.wandb.project,
-            entity=cfg.wandb.entity,
-            config=OmegaConf.to_container(cfg.model, resolve=True),
-            name=cfg.wandb.name,
-            # mode=cfg.wandb.mode
-        )
+    wandb.init()
 
     # Compute covariates
     covariates = None
@@ -74,10 +71,15 @@ def main(cfg: DictConfig):
         'target': StandardScaler(axis=scale_axis),
     }
 
+    # update config with wandb config: batch_size
+    if 'batch_size' in wandb.config.keys():
+        cfg.batch_size = wandb.config['batch_size']
+        print(Fore.GREEN + f"Updated batch size: {cfg.batch_size}")
+
     data_module = SpatioTemporalDataModule(
         dataset=torch_dataset,
         scalers=transform,
-        batch_size=cfg.optimizer.batch_size,
+        batch_size=cfg.batch_size,
         workers=cfg.optimizer.num_workers,
         splitter=dataset.get_splitter(**cfg.dataset.splitting),
     )
@@ -106,6 +108,15 @@ def main(cfg: DictConfig):
 
     model_kwargs.update(cfg.model.hparams)
 
+    # update with wandb config
+    for key in wandb.config.keys():
+        if key in model_kwargs.keys():
+            model_kwargs[key] = wandb.config[key]
+            cfg.model.hparams[key] = wandb.config[key]
+            print(Fore.GREEN + f"Updated model kwargs: {key} = {wandb.config[key]}")
+        else:
+            print(Fore.RED + f"Key {key} not found in model kwargs, skipping.")
+
     ########################################
     # predictor                            #
     ########################################
@@ -125,12 +136,27 @@ def main(cfg: DictConfig):
     else:
         scheduler_class = scheduler_kwargs = None
 
+    optimizer_kwargs = dict(cfg.optimizer.hparams)
+
+    # update optimizer kwargs with wandb config
+    if 'optimizer' in wandb.config.keys():
+        cfg.optimizer.name = wandb.config['optimizer']
+        print(Fore.GREEN + f"Updated optimizer: {cfg.optimizer}")
+
+    for key in wandb.config.keys():
+        if key in optimizer_kwargs.keys():
+            optimizer_kwargs[key] = wandb.config[key]
+            cfg.optimizer.hparams[key] = wandb.config[key]
+            print(Fore.GREEN + f"Updated optimizer kwargs: {key} = {wandb.config[key]}")
+        else:
+            print(Fore.RED + f"Key \'{key}\' not found in optimizer kwargs, skipping.")
+
     # setup predictor
     predictor = WrapPredictor(
         model_class=model,
         model_kwargs=model_kwargs,
         optim_class=getattr(torch.optim, cfg.optimizer.name),
-        optim_kwargs=dict(cfg.optimizer.hparams),
+        optim_kwargs=optimizer_kwargs,
         loss_fn=loss_fn,
         metrics=metrics,
         scheduler_class=scheduler_class,
@@ -216,7 +242,34 @@ def main(cfg: DictConfig):
         run_dir=cfg.run_dir,
         log_metrics=log_list
     )
-    
+
+def wandb_sweep():
+    """
+    Run a sweep with wandb.
+    """
+    wandb_sweep_path = "./config/wandb/sweep.yaml"
+    wandb_keys_path = "./config/wandb/keys.yaml"
+    with open(wandb_sweep_path, 'r') as f:
+        dict_sweep = yaml.safe_load(f)
+    with open(wandb_keys_path, 'r') as f:
+        dict_keys = yaml.safe_load(f)
+
+    dict_sweep = dict_sweep['sweep']
+
+    wandb.login(key=dict_keys['key'])
+
+    for key in dict_sweep.keys():
+        print(f"Setting sweep parameter {key} to {dict_sweep[key]}")
+
+    # Initialize the sweep
+    sweep_id = wandb.sweep(
+        sweep=dict_sweep,
+        project=dict_keys['project'],
+        entity=dict_keys['entity'],
+    )
+
+    # Start the sweep
+    wandb.agent(sweep_id, function=main, count=dict_sweep['count'])
 
 if __name__ == "__main__":
-    main()
+    wandb_sweep()

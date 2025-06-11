@@ -7,6 +7,7 @@ class MetricsLogger:
                             "mae_at_3_days": torch_metrics.MaskedMAE(at=2),
                             "mae_at_6_days": torch_metrics.MaskedMAE(at=5),
                             "mae_at_12_days": torch_metrics.MaskedMAE(at=11),
+                            "mae_at_14_days": torch_metrics.MaskedMAE(at=13),
                             'mre': torch_metrics.MaskedMRE(),
                             'mse': torch_metrics.MaskedMSE()}
         

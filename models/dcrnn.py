@@ -96,13 +96,14 @@ class DCRNNModel(BaseModel):
     A simple seq2seq DCRNN with scheduled sampling.
     """
     def __init__(self, kernel_size, input_size, hidden_size, output_size,
-                 n_layers, horizon, dropout = 0.1, autoregressive=False, activation='relu', exog_size=0):
+                 n_layers, horizon, dropout = 0.1, use_final_relu=False, autoregressive=False, activation='relu', exog_size=0):
         super().__init__()
         self.horizon = horizon
         self.n_layers = n_layers
         self.autoregressive = autoregressive
         self.hidden_size = hidden_size
         self.dropout = dropout
+        self.use_final_relu = use_final_relu
 
         # final projection from hidden_size -> output_size
         self.in_proj = nn.Linear(input_size + exog_size, hidden_size)
@@ -191,6 +192,8 @@ class DCRNNModel(BaseModel):
         # x: [batch, T_enc, N, input_size]
         # y_true: optional [batch, T_dec, N, output_size] for teacher forcing
 
+        x_skip = x[:, -1:, :, :]  # [batch, 1, N, input_size]
+
         if u is not None:
             x = torch.cat((x, u), dim=-1)  # [batch, T_enc, N, input_size + exog_size]
 
@@ -209,7 +212,10 @@ class DCRNNModel(BaseModel):
             h = h[-1]  # [batch, N, hidden_size]
             y_pred = self.readout(h)
             y_pred = einops.rearrange(y_pred, "b n t -> b t n 1")
-        
+
+        if self.use_final_relu:
+            y_pred = F.relu(y_pred) + einops.repeat(x_skip, "b 1 n c -> b t n c", t = self.horizon)
+
         return y_pred   # [batch, N, T_dec, output_size]
     
 class StrangeMLP(nn.Module):
@@ -245,6 +251,7 @@ class StrangeMLP(nn.Module):
             outputs.append(x_out)        
 
         x = torch.cat(outputs, dim=-1)  # [batch, horizon, N, output_size]
+        
         return x
     
 class MLP(nn.Module):

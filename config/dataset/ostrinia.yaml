@@ -1,8 +1,9 @@
 
 name: ostrinia
-target: "nb_ostrinia"
+# target: "nb_ostrinia"
+target: "incrementing_ostrinia"
 window: 12
-horizon: 6
+horizon: 14
 stride: 1
 splitting:
   val_len: 0.1
@@ -13,4 +14,4 @@ connectivity:
   include_self: False
   layout: edge_index
 
-log_metrics: ["mae", "mae_at_3_days", "mae_at_6_days", "mre", "mse"]
+log_metrics: ["mae", "mae_at_3_days", "mae_at_6_days", "mae_at_14_days", "mre", "mse"]

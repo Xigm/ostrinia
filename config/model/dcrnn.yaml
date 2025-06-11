@@ -1,8 +1,9 @@
 
 name: dcrnn
 hparams:
-  hidden_size: 64
+  hidden_size: 16
   kernel_size: 2
   n_layers: 1
   activation: 'elu'
   dropout: 0.2
+  use_final_relu: true

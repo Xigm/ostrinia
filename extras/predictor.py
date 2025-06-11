@@ -126,7 +126,6 @@ class WrapPredictor(Predictor):
         self.val_metrics.update(y_hat, y, mask)
         self.log_metrics(self.val_metrics, batch_size=batch.batch_size)
         self.log_loss('val', val_loss, batch_size=batch.batch_size)
-
         return val_loss
     
     def test_step(self, batch: Union[Tensor, Dict[str, Tensor]], batch_idx: int = 0) -> Union[Tensor, Dict[str, Tensor]]:
