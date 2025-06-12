@@ -11,11 +11,12 @@ class Ostrinia(DatetimeDataset):
 
     similarity_options = {'distance'}
 
-    def __init__(self, root: str = "datasets", input_zeros: bool = True, freq=None, target="nb_ostrinia"):
+    def __init__(self, root: str = "datasets", input_zeros: bool = True, freq=None, target="nb_ostrinia", smooth: bool = False):
         
         self.root = root
         self.extra_data = None
         self.target = target
+        self.smooth = smooth
 
         df, dist, mask = self.load(input_zeros)
 
@@ -27,7 +28,6 @@ class Ostrinia(DatetimeDataset):
                          name="Ostrinia")
 
         self.add_covariate('dist', dist, pattern='n n')
-    
 
     def load_raw(self):
 
@@ -63,6 +63,10 @@ class Ostrinia(DatetimeDataset):
         df = df.set_index('Date')
         df_clean = df.pivot(columns='node_index', values=self.target)
 
+        # if smooth is True, apply a rolling mean with a window of 7
+        if self.smooth:
+            df_clean = df_clean.rolling(window=7, min_periods=7).mean()
+
         # compute mask for nan values
         mask = ((~np.isnan(df_clean.values)).astype('uint8'))
         if impute_zeros:
@@ -81,8 +85,21 @@ class Ostrinia(DatetimeDataset):
         list_of_extra_columns = ['nb_ostrinia', 'trap_elevation', 'corn_size', 'incrementing_ostrinia', 'nb_ostrinia_new', 'Weather Station Changins', 'TempAv', 'TempMin', 'TempMax', 'TempGrasMin', 'TempSol-5', 'TempSoil-10', 'RHmoy', 'Prec', 'PrecMax', 'Insol', 'Ray', 'EvapTranspi', 'WindSpeedAb', 'WindSpeedmax', 'WaterDef', 'Somt', 'Soms']
         extra_data = {}
         for element in list_of_extra_columns:
-            if element is not self.target:
+            if element != self.target:
                 extra_data[element] = df.pivot(columns='node_index', values=element)
+                if element in ['nb_ostrinia', 'incrementing_ostrinia', 'nb_ostrinia_new']:
+                    # if the column is one of these, we want to impute zeros
+                    extra_data[element] = extra_data[element].rolling(window=7, min_periods=1).mean()
+
+        # add as covariate the day of the year. index is a string with format YYYY-MM-DD. extract the day of the year and create an enconding 
+        index = df.index
+        # encode it as a number from 0 to 365
+        df['day_of_year'] = pd.to_datetime(index, format='%Y-%m-%d').dayofyear
+        extra_data['day_of_year'] = df.pivot(columns='node_index', values="day_of_year")
+
+        # drop Weather Station Changins
+        if 'Weather Station Changins' in extra_data:
+            extra_data.pop('Weather Station Changins')
 
         self.extra_data = extra_data
 

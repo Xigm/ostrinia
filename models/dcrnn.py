@@ -96,7 +96,7 @@ class DCRNNModel(BaseModel):
     A simple seq2seq DCRNN with scheduled sampling.
     """
     def __init__(self, kernel_size, input_size, hidden_size, output_size,
-                 n_layers, horizon, dropout = 0.1, use_final_relu=False, autoregressive=False, activation='relu', exog_size=0):
+                 n_layers, horizon, dropout = 0.1, use_final_relu=False, autoregressive=False, activation='relu', exog_size=0, n_nodes=None):
         super().__init__()
         self.horizon = horizon
         self.n_layers = n_layers
@@ -138,8 +138,10 @@ class DCRNNModel(BaseModel):
         
         self.dropout = nn.Dropout(dropout)
         self.activation = getattr(F, activation)
-        
 
+        self.node_embeddings = nn.Parameter(torch.empty(n_nodes, hidden_size)) if n_nodes is not None else None
+        if self.node_embeddings is not None:
+            nn.init.xavier_uniform_(self.node_embeddings)
 
     def encode(self, inputs, edge_index=None, edge_weight=None):
         # inputs: [batch, T, N, input_size]
@@ -188,7 +190,7 @@ class DCRNNModel(BaseModel):
 
         
 
-    def forward(self, x, y_true=None, training=False, epsilon=0.0, edge_index=None, edge_weight=None, u=None, past_values=None):
+    def forward(self, x, y_true=None, training=False, epsilon=0.0, edge_index=None, edge_weight=None, u=None, past_values=None, enable_mask=None):
         # x: [batch, T_enc, N, input_size]
         # y_true: optional [batch, T_dec, N, output_size] for teacher forcing
 
@@ -200,9 +202,22 @@ class DCRNNModel(BaseModel):
         if past_values is not None:
             x = torch.cat((x, past_values), dim=-1)
 
+        if enable_mask is not None:
+            x = torch.cat((x, enable_mask), dim=-1)
+
+        # if self.node_embeddings is not None:
+        #     # Add node embeddings to the input
+        #     x = torch.cat((x, einops.repeat(self.node_embeddings, "n c -> b t n c", b=x.shape[0], t=x.shape[1])), dim=-1)
+
         x = self.in_proj(x)  # [batch, T_enc, N, hidden_size]
+
+        if self.node_embeddings is not None:
+            x = x + einops.repeat(self.node_embeddings, "n c -> b t n c", b=x.shape[0], t=x.shape[1])  # [batch, T_enc, N, hidden_size]
+
         x = self.dropout(x)  # [batch, T_enc, N, hidden_size]
         x = self.activation(x)
+
+
         h = self.encode(x, edge_index=edge_index, edge_weight=edge_weight)  # [batch, T_enc, N, hidden_size]
 
         if self.autoregressive:

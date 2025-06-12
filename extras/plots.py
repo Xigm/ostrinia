@@ -34,7 +34,7 @@ def plot_predictions_test(predictor, data_module, run_dir, log_metrics=None):
     non_zero_nodes = [i for i in range(y.shape[2]) if np.sum(y[:, 0, i, :]) != 0]
 
     # important nodes are the 3 ones with the highest sum across all time steps
-    important_nodes = np.argsort(np.sum(y[:, 0, non_zero_nodes, :], axis=0))[-3:]
+    important_nodes = [4, 9, 10]
 
     # get indices of non-zero nodes
     horizon = y.shape[1]

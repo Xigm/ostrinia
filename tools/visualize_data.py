@@ -202,63 +202,123 @@ class SpatiotemporalVisualizer:
                        fontsize=10, color='white', weight='bold',
                        bbox=dict(boxstyle='round,pad=0.3', facecolor='black', alpha=0.5))
         
+    # def plot_heatmap(self, figsize=(12, 8), cmap='viridis', show_mask=False):
+    #     """
+    #     Create a heatmap of the spatiotemporal data.
+        
+    #     Parameters:
+    #     -----------
+    #     figsize : tuple
+    #         Figure size (width, height)
+    #     cmap : str
+    #         Colormap name
+    #     show_mask : bool
+    #         If True, overlay the mask on the heatmap
+    #     """
+    #     fig, ax = plt.subplots(figsize=figsize)
+        
+    #     # Create custom colormap with grey for masked values
+    #     if show_mask:
+    #         # Create a copy of the data
+    #         plot_data = self.masked_df.copy()
+            
+    #         # Create custom colormap
+    #         cmap_obj = plt.cm.get_cmap(cmap)
+    #         cmap_obj.set_bad(color='lightgray')
+            
+    #         im = ax.imshow(plot_data.T, aspect='auto', cmap=cmap_obj, 
+    #                       interpolation='nearest', extent=[0, len(self.df.index), 0, len(self.df.columns)])
+    #     else:
+    #         im = ax.imshow(self.masked_df.T, aspect='auto', cmap=cmap, 
+    #                       interpolation='nearest', extent=[0, len(self.df.index), 0, len(self.df.columns)])
+        
+    #     # Set labels
+    #     ax.set_xlabel('Time Index')
+    #     ax.set_ylabel('Node')
+    #     ax.set_title(f'{self.var_name} - Spatiotemporal Signal Heatmap')
+        
+    #     # Add colorbar
+    #     divider = make_axes_locatable(ax)
+    #     cax = divider.append_axes("right", size="5%", pad=0.05)
+    #     cbar = plt.colorbar(im, cax=cax)
+    #     cbar.set_label('Signal Value')
+        
+    #     # Set tick labels
+    #     if len(self.df.index) < 50:
+    #         ax.set_xticks(range(0, len(self.df.index), max(1, len(self.df.index)//10)))
+    #         ax.set_xticklabels([str(idx)[:10] for idx in self.df.index[::max(1, len(self.df.index)//10)]], 
+    #                            rotation=45, ha='right')
+        
+    #     # Add year lines if datetime index
+    #     try:
+    #         time_index = pd.to_datetime(self.df.index)
+    #         self._add_year_lines_heatmap(ax, time_index)
+    #     except:
+    #         pass
+        
+    #     plt.tight_layout()
+    #     return fig, ax
+    
     def plot_heatmap(self, figsize=(12, 8), cmap='viridis', show_mask=False):
         """
-        Create a heatmap of the spatiotemporal data.
-        
-        Parameters:
-        -----------
-        figsize : tuple
-            Figure size (width, height)
-        cmap : str
-            Colormap name
-        show_mask : bool
-            If True, overlay the mask on the heatmap
+        Heat-map of the spatio-temporal signal.
+        Missing dates (outside Apr–Oct) are rendered in grey.
         """
+        import pandas as pd
+        import matplotlib.pyplot as plt
+        from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+        # ------------------------------------------------------------------
+        # 1. Build a *full-year* index at the native frequency of the data
+        # ------------------------------------------------------------------
+        time_index = pd.to_datetime(self.df.index)
+        freq = pd.infer_freq(time_index) or 'D'                   # fall back to daily
+        full_index = pd.date_range(start=time_index.min().replace(month=1, day=1),
+                                end  =time_index.max().replace(month=12, day=31),
+                                freq =freq)
+
+        # Re-index the masked data; new rows are NaN  → plotted as “bad”
+        plot_df = self.masked_df.reindex(full_index)
+
+        # ------------------------------------------------------------------
+        # 2. Configure colormap so NaN → light grey
+        # ------------------------------------------------------------------
+        cmap_obj = plt.cm.get_cmap(cmap).copy()                   # avoid mutating global cmap
+        cmap_obj.set_bad(color='lightgray')
+
+        # ------------------------------------------------------------------
+        # 3. Draw the heat-map
+        # ------------------------------------------------------------------
         fig, ax = plt.subplots(figsize=figsize)
-        
-        # Create custom colormap with grey for masked values
-        if show_mask:
-            # Create a copy of the data
-            plot_data = self.masked_df.copy()
-            
-            # Create custom colormap
-            cmap_obj = plt.cm.get_cmap(cmap)
-            cmap_obj.set_bad(color='lightgray')
-            
-            im = ax.imshow(plot_data.T, aspect='auto', cmap=cmap_obj, 
-                          interpolation='nearest', extent=[0, len(self.df.index), 0, len(self.df.columns)])
-        else:
-            im = ax.imshow(self.masked_df.T, aspect='auto', cmap=cmap, 
-                          interpolation='nearest', extent=[0, len(self.df.index), 0, len(self.df.columns)])
-        
-        # Set labels
-        ax.set_xlabel('Time Index')
+        im = ax.imshow(plot_df.T, aspect='auto', cmap=cmap_obj,
+                    interpolation='nearest',
+                    extent=[0, len(full_index), 0, len(self.df.columns)])
+
+        # Axis labels and title
+        ax.set_xlabel('Time index')
         ax.set_ylabel('Node')
-        ax.set_title(f'{self.var_name} - Spatiotemporal Signal Heatmap')
-        
-        # Add colorbar
+        ax.set_title(f'{self.var_name} – spatiotemporal signal')
+
+        # Colour-bar
         divider = make_axes_locatable(ax)
         cax = divider.append_axes("right", size="5%", pad=0.05)
         cbar = plt.colorbar(im, cax=cax)
-        cbar.set_label('Signal Value')
-        
-        # Set tick labels
-        if len(self.df.index) < 50:
-            ax.set_xticks(range(0, len(self.df.index), max(1, len(self.df.index)//10)))
-            ax.set_xticklabels([str(idx)[:10] for idx in self.df.index[::max(1, len(self.df.index)//10)]], 
-                               rotation=45, ha='right')
-        
-        # Add year lines if datetime index
-        try:
-            time_index = pd.to_datetime(self.df.index)
-            self._add_year_lines_heatmap(ax, time_index)
-        except:
-            pass
-        
+        cbar.set_label('Signal value')
+
+        # X-ticks: show ≤10 evenly spaced labels
+        step = max(1, len(full_index) // 10)
+        ax.set_xticks(range(0, len(full_index), step))
+        ax.set_xticklabels([idx.strftime('%d-%b') for idx in full_index[::step]],
+                        rotation=45, ha='right')
+
+        # Optional vertical year lines
+        self._add_year_lines_heatmap(ax, full_index)
+
         plt.tight_layout()
         return fig, ax
-    
+
+
+
     def plot_node_traces(self, nodes=None, figsize=(12, 6), alpha=0.7):
         """
         Plot time series for specific nodes.
@@ -649,7 +709,7 @@ if __name__ == "__main__":
     target = 'incrementing_ostrinia'
 
     # Example of using with your own data:
-    dataset = Ostrinia(root="datasets", target=target)
+    dataset = Ostrinia(root="datasets", target=target, smooth=True)
 
     df = dataset.target
     mask = dataset.mask[:, :, 0]  # Transpose to match the shape of df

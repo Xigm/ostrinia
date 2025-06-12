@@ -3,6 +3,7 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 import wandb
 from tsl.data import SpatioTemporalDataset, SpatioTemporalDataModule
+from extras.sampling_st_datamodule import SamplingSTDataModule
 from tsl.data.preprocessing import StandardScaler
 from tsl.metrics import torch_metrics
 
@@ -17,6 +18,8 @@ from extras.plots import plot_predictions_test
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import TensorBoardLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+
+from numpy import concatenate, isnan, nan_to_num
 
 import yaml
 from colorama import Fore, Style, init
@@ -49,13 +52,35 @@ def main(cfg: DictConfig):
 
     wandb.init()
 
-    # Compute covariates
-    covariates = None
-
     #######################################
     # dataset Initialization
     #######################################
-    dataset = Ostrinia(root = "datasets", target = cfg.dataset.target)
+    dataset = Ostrinia(root = "datasets", target = cfg.dataset.target, smooth = cfg.dataset.smooth)
+
+
+    if cfg.dataset.add_covariates:
+        u = []
+        covariates = dict() 
+        for key in dataset.extra_data.keys():
+            # replace nan with 0
+            if dataset.extra_data[key].isnull().values.any():
+                # normalize the covariate
+                covariate = dataset.extra_data[key].to_numpy().astype(float)
+                # if there are nans mask the data before computing the mean and std
+                if isnan(covariate).any():
+                    covariate_mean = covariate[~isnan(covariate)].mean()
+                    covariate_std = covariate[~isnan(covariate)].std()
+                else:
+                    covariate_mean = covariate.mean()
+                    covariate_std = covariate.std()
+                covariate = (covariate - covariate_mean) / covariate_std
+                # we normalize by mean correctly but not by std, it ends up being smaller
+                dataset.extra_data[key] = nan_to_num(covariate)
+
+            u.append(dataset.extra_data[key].astype(float)[:, :, None])  # add a new axis to the covariates
+        covariates.update(u=concatenate(u, axis=-1))
+    else:
+        covariates = None
 
     torch_dataset = SpatioTemporalDataset(target=dataset.dataframe(),
                                           mask=dataset.mask,
@@ -65,7 +90,9 @@ def main(cfg: DictConfig):
                                           stride=cfg.dataset.stride)
     
     input_size = torch_dataset.n_channels
-    
+
+    torch_dataset.add_exogenous("enable_mask", dataset.mask.astype(float))
+
     scale_axis = (0,) if cfg.get('scale_axis') == 'node' else (0, 1)
     transform = {
         'target': StandardScaler(axis=scale_axis),
@@ -97,7 +124,7 @@ def main(cfg: DictConfig):
     model = get_model(cfg.model.name)
 
     model_kwargs = dict(n_nodes=torch_dataset.n_nodes,
-                        input_size=input_size,
+                        input_size=input_size + 1 + len(u) if covariates is not None else 0,
                         exog_size=0,
                         output_size=torch_dataset.n_channels,
                         weighted_graph=torch_dataset.edge_weight is not None,
@@ -121,7 +148,8 @@ def main(cfg: DictConfig):
     # predictor                            #
     ########################################
 
-    loss_fn = torch_metrics.MaskedMAE(compute_on_step=True)
+    # loss_fn = torch_metrics.MaskedMAE(compute_on_step=True)
+    loss_fn = torch_metrics.MaskedMSE(compute_on_step=True) 
     
     log_list = cfg.dataset.log_metrics
 
@@ -161,6 +189,7 @@ def main(cfg: DictConfig):
         metrics=metrics,
         scheduler_class=scheduler_class,
         scheduler_kwargs=scheduler_kwargs,
+        sampling = cfg.dataset.sampling # Set to -1 for no sampling,
     )
 
     exp_logger = TensorBoardLogger(save_dir=cfg.run_dir, name=cfg.run_name)
@@ -214,8 +243,8 @@ def main(cfg: DictConfig):
                       limit_train_batches=cfg.train_batches,
                       default_root_dir=cfg.run_dir,
                       logger=exp_logger,  # Disable default logger
-                      accelerator='gpu' if torch.cuda.is_available() else 'cpu',
-                    #   devices=,
+                      accelerator= 'gpu' if torch.cuda.is_available() else 'cpu',
+                      devices= 1 if torch.cuda.is_available() else None,
                       gradient_clip_val=cfg.grad_clip_val,
                       callbacks=[early_stop_callback, checkpoint_callback, wandb_logger_callback])
 

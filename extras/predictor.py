@@ -22,7 +22,8 @@ class WrapPredictor(Predictor):
                  optim_class: Optional[Type] = None,
                  optim_kwargs: Optional[Mapping] = None,
                  scheduler_class: Optional[Type] = None,
-                 scheduler_kwargs: Optional[Mapping] = None):
+                 scheduler_kwargs: Optional[Mapping] = None,
+                 sampling: int = 0):
         
         super(WrapPredictor, self).__init__(       model=model,
                                                     model_class=model_class,
@@ -34,16 +35,23 @@ class WrapPredictor(Predictor):
                                                     metrics=metrics,
                                                     scheduler_class=scheduler_class,
                                                     scheduler_kwargs=scheduler_kwargs)
+        
+        self.sampling = sampling
 
     def predict_batch(self, 
                         batch,
                         preprocess: bool = False, 
                         postprocess: bool = True,
                         return_target: bool = False,
+                        maybe_x: Optional[Tensor] = None,
+                        maybe_y: Optional[Tensor] = None,
                         **forward_kwargs):
 
-                
             inputs, targets, mask, transform = self._unpack_batch(batch)
+
+            if maybe_y is not None:
+                targets = maybe_y
+
             if preprocess:
                 for key, trans in transform.items():
                     if key in inputs:
@@ -52,7 +60,11 @@ class WrapPredictor(Predictor):
             if forward_kwargs is None:
                 forward_kwargs = dict()
 
-            y_hat = self.forward(**inputs, **forward_kwargs)
+            if maybe_x is not None:
+                x = maybe_x
+                y_hat = self.forward(x, **inputs, **forward_kwargs)
+            else:
+                y_hat = self.forward(**inputs, **forward_kwargs)
 
             # Rescale outputs
             if postprocess:
@@ -78,11 +90,38 @@ class WrapPredictor(Predictor):
         if mask is not None:
             output['mask'] = mask
         return output
-    
+
     def training_step(self, batch: Union[Tensor, Dict[str, Tensor]], batch_idx: int = 0) -> Union[Tensor, Dict[str, Tensor]]:
 
-        y = y_loss = batch.y
         mask = batch.get('mask')
+
+        # if we sample, preserve only the input and target of the half with the highest std
+        if self.sampling != -1:
+            if 'x' in batch:
+                x = batch['x']
+                y = batch['y']
+                std = y.std(dim=(1,2,3)) + x.std(dim=(1,2,3))
+
+                if self.sampling == 0:
+                    idx = std.nonzero(as_tuple=False).squeeze(1)
+                else:
+                    idx = std.topk(x.shape[0] // self.sampling).indices
+
+                # drop all zero std samples
+                batch['x'] = x[idx, :]
+                batch['y'] = y[idx, :]
+                
+                batch['u'] = batch['u'][idx, :]
+
+                if 'enable_mask' in batch.keys():
+                    batch['enable_mask'] = batch['enable_mask'][idx, :]
+
+                mask = mask[idx, :]
+
+            else:
+                raise ValueError("Sampling is only supported for batches with 'x'.")
+
+        y = y_loss = batch['y']
 
         # Compute predictions and compute loss
         y_hat_loss = self.predict_batch(batch, preprocess=False,

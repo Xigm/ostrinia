@@ -95,7 +95,7 @@ def main(cfg: DictConfig):
     model = get_model(cfg.model.name)
 
     model_kwargs = dict(n_nodes=torch_dataset.n_nodes,
-                        input_size=input_size,
+                        input_size=input_size + torch_dataset.n_covariates,
                         exog_size=0,
                         output_size=torch_dataset.n_channels,
                         weighted_graph=torch_dataset.edge_weight is not None,

@@ -4,3 +4,4 @@ logs
 *.npy
 /outputs
 wandb
+*.pyc

@@ -15,3 +15,6 @@ connectivity:
   layout: edge_index
 
 log_metrics: ["mae", "mae_at_3_days", "mae_at_6_days", "mae_at_14_days", "mre", "mse"]
+add_covariates: true
+smooth: true
+sampling: 2
