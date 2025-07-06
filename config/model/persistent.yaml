@@ -1,5 +1,4 @@
-
-name: dcrnn
+name: persistent
 hparams:
   hidden_size: 16
   kernel_size: 2

@@ -1,0 +1,7 @@
+
+name: arimax
+hparams:
+  p: 1
+  d: 1
+  q: 1
+  include_constant: true

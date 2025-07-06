@@ -229,7 +229,10 @@ class DCRNNModel(BaseModel):
             y_pred = einops.rearrange(y_pred, "b n t -> b t n 1")
 
         if self.use_final_relu:
-            y_pred = F.relu(y_pred) + einops.repeat(x_skip, "b 1 n c -> b t n c", t = self.horizon)
+            # if self.training:
+            #     y_pred = y_pred + einops.repeat(x_skip, "b 1 n c -> b t n c", t = self.horizon)
+            # else:
+                y_pred = F.relu(y_pred) + einops.repeat(x_skip, "b 1 n c -> b t n c", t = self.horizon)
 
         return y_pred   # [batch, N, T_dec, output_size]
     

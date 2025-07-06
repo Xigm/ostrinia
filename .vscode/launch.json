@@ -8,10 +8,11 @@
         "request": "launch",
         // Equivalente a: python -m experiments.main
 
-        // "module": "experiments.main",
-        "module": "experiments.sweep",
+        "module": "experiments.main",
+        // "module": "experiments.sweep",
         // "module": "tools.create_dist_matrix",
       //  "module": "tools.visualize_data",
+        // "module": "tools.check_slopes",
 
         // Directorio raíz del proyecto que contiene lib/ y experiments/
         "cwd": "${workspaceFolder}",
@@ -19,11 +20,11 @@
         "env": {
           // Añade project_root a sys.path para que importe lib/
           "PYTHONPATH": "${workspaceFolder}",
-          "CUDA_VISIBLE_DEVICES": "0",
+          "CUDA_VISIBLE_DEVICES": "3",
         },
         "justMyCode": false,
         "args": [
-          "model=dcrnn",
+          "model=grugcn",
           "dataset=ostrinia"
         ]
       }

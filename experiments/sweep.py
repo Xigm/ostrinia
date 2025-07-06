@@ -9,11 +9,15 @@ from tsl.metrics import torch_metrics
 
 from datasets.ostrinia import Ostrinia
 
+from models.gru import GRU
 from models.dcrnn import DCRNNModel
+from models.grugcn import GRUGCN
+
 from extras.predictor import WrapPredictor
 from extras.metrics_logging import MetricsLogger
 from extras.callbacks import Wandb_callback, MetricsHistory
 from extras.plots import plot_predictions_test
+from extras.nmse_loss import MaskedNMSE
 
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -21,7 +25,11 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 
 from numpy import concatenate, isnan, nan_to_num
 
+from datetime import datetime
+
 import yaml
+import sys
+
 from colorama import Fore, Style, init
 init()
 
@@ -29,6 +37,10 @@ init()
 def get_model(name):
     if name == 'dcrnn':
         return DCRNNModel
+    elif name == 'grugcn':
+        return GRUGCN
+    elif name == 'gru':
+        return GRU
     else:
         raise NotImplementedError(f"Model {name} is not implemented.")
     
@@ -55,27 +67,28 @@ def main(cfg: DictConfig):
     #######################################
     # dataset Initialization
     #######################################
-    dataset = Ostrinia(root = "datasets", target = cfg.dataset.target, smooth = cfg.dataset.smooth)
+    dataset = Ostrinia(root = "datasets",
+                       target = cfg.dataset.target,
+                       smooth = cfg.dataset.smooth,
+                       full_normalization = cfg.dataset.full_normalization)
 
 
     if cfg.dataset.add_covariates:
         u = []
         covariates = dict() 
         for key in dataset.extra_data.keys():
-            # replace nan with 0
-            if dataset.extra_data[key].isnull().values.any():
-                # normalize the covariate
-                covariate = dataset.extra_data[key].to_numpy().astype(float)
-                # if there are nans mask the data before computing the mean and std
-                if isnan(covariate).any():
-                    covariate_mean = covariate[~isnan(covariate)].mean()
-                    covariate_std = covariate[~isnan(covariate)].std()
-                else:
-                    covariate_mean = covariate.mean()
-                    covariate_std = covariate.std()
-                covariate = (covariate - covariate_mean) / covariate_std
-                # we normalize by mean correctly but not by std, it ends up being smaller
-                dataset.extra_data[key] = nan_to_num(covariate)
+            # normalize the covariate
+            covariate = dataset.extra_data[key].to_numpy().astype(float)
+            # if there are nans mask the data before computing the mean and std
+            if isnan(covariate).any():
+                covariate_mean = covariate[~isnan(covariate)].mean()
+                covariate_std = covariate[~isnan(covariate)].std()
+            else:
+                covariate_mean = covariate.mean()
+                covariate_std = covariate.std()
+            covariate = (covariate - covariate_mean) / covariate_std
+            # we normalize by mean correctly but not by std, it ends up being smaller
+            dataset.extra_data[key] = nan_to_num(covariate)
 
             u.append(dataset.extra_data[key].astype(float)[:, :, None])  # add a new axis to the covariates
         covariates.update(u=concatenate(u, axis=-1))
@@ -87,8 +100,9 @@ def main(cfg: DictConfig):
                                           covariates=covariates,
                                           horizon=cfg.dataset.horizon,
                                           window=cfg.dataset.window,
-                                          stride=cfg.dataset.stride)
-    
+                                          stride=cfg.dataset.stride,
+                                          delay=cfg.dataset.delay)
+
     input_size = torch_dataset.n_channels
 
     torch_dataset.add_exogenous("enable_mask", dataset.mask.astype(float))
@@ -102,6 +116,10 @@ def main(cfg: DictConfig):
     if 'batch_size' in wandb.config.keys():
         cfg.batch_size = wandb.config['batch_size']
         print(Fore.GREEN + f"Updated batch size: {cfg.batch_size}")
+
+    if "epochs" in wandb.config.keys():
+        cfg.epochs = wandb.config['epochs']
+        print(Fore.GREEN + f"Updated epochs: {cfg.epochs}")
 
     data_module = SpatioTemporalDataModule(
         dataset=torch_dataset,
@@ -148,9 +166,19 @@ def main(cfg: DictConfig):
     # predictor                            #
     ########################################
 
-    # loss_fn = torch_metrics.MaskedMAE(compute_on_step=True)
-    loss_fn = torch_metrics.MaskedMSE(compute_on_step=True) 
-    
+    if "loss_fn" in wandb.config.keys():
+        cfg.optimizer.loss_fn = wandb.config['loss_fn']
+        print(Fore.GREEN + f"Updated loss function: {cfg.optimizer.loss_fn}")
+        
+    if cfg.optimizer.loss_fn == 'mae':
+        loss_fn = torch_metrics.MaskedMAE(compute_on_step=True)
+    elif cfg.optimizer.loss_fn == 'mse':
+        loss_fn = torch_metrics.MaskedMSE(compute_on_step=True)
+    elif cfg.optimizer.loss_fn == 'nmse':
+        loss_fn = MaskedNMSE()
+    elif cfg.optimizer.loss_fn == 'mape':
+        loss_fn = torch_metrics.MaskedMAPE(compute_on_step=True)
+
     log_list = cfg.dataset.log_metrics
 
     log_metrics = MetricsLogger()
@@ -211,6 +239,25 @@ def main(cfg: DictConfig):
         mode='min',
     )
     
+    config = {
+                "learning_rate": cfg.optimizer.hparams.lr,
+                "batch_size": cfg.batch_size,
+                "model": cfg.model.name,
+                "optimizer": cfg.optimizer.name,
+                "hidden_size": cfg.model.hparams.hidden_size,
+                "dropout": cfg.model.hparams.dropout,
+                "regularization_weight": cfg.get('regularization_weight', 0.0),
+                "dataset": cfg.dataset.name,
+                "epochs": cfg.epochs,
+                "window": cfg.dataset.window,
+                "horizon": cfg.dataset.horizon
+            }
+    
+    if cfg.model.name == 'grugcn':
+        config.update({
+            "n_layers_rnn": cfg.model.hparams.n_layers_rnn,
+            "n_layers_gnn": cfg.model.hparams.n_layers_gnn,
+        })
 
     run = wandb.init(
                 # Set the wandb entity where your project will be logged (generally your team name).
@@ -218,19 +265,7 @@ def main(cfg: DictConfig):
                 # Set the wandb project where this run will be logged.
                 project=cfg.wandb.project,
                 # Track hyperparameters and run metadata.
-                config={
-                    "learning_rate": cfg.optimizer.hparams.lr,
-                    "batch_size": cfg.batch_size,
-                    "model": cfg.model.name,
-                    "optimizer": cfg.optimizer.name,
-                    "hidden_size": cfg.model.hparams.hidden_size,
-                    "dropout": cfg.model.hparams.dropout,
-                    "regularization_weight": cfg.get('regularization_weight', 0.0),
-                    "dataset": cfg.dataset.name,
-                    "epochs": cfg.epochs,
-                    "window": cfg.dataset.window,
-                    "horizon": cfg.dataset.horizon
-                },
+                config=config
             )
     
     wandb_logger_callback = Wandb_callback(
@@ -269,14 +304,26 @@ def main(cfg: DictConfig):
         predictor=predictor,
         data_module=data_module,
         run_dir=cfg.run_dir,
-        log_metrics=log_list
+        log_metrics=log_list, 
+        wandb_run=run,
     )
 
 def wandb_sweep():
     """
     Run a sweep with wandb.
     """
-    wandb_sweep_path = "./config/wandb/sweep.yaml"
+
+    # get model name from command line arguments
+    model_name = sys.argv[1] if len(sys.argv) > 1 else 'gru'
+
+    # get model from argv
+    if "grugcn" in model_name:
+        wandb_sweep_path = "./config/wandb/sweep_grugcn.yaml"
+    elif 'arimax' in model_name:
+        wandb_sweep_path = "./config/wandb/sweep_arimax.yaml"
+    else:
+        wandb_sweep_path = "./config/wandb/sweep.yaml"
+
     wandb_keys_path = "./config/wandb/keys.yaml"
     with open(wandb_sweep_path, 'r') as f:
         dict_sweep = yaml.safe_load(f)
@@ -289,6 +336,11 @@ def wandb_sweep():
 
     for key in dict_sweep.keys():
         print(f"Setting sweep parameter {key} to {dict_sweep[key]}")
+
+    # make name of sween name of model + date
+    now = datetime.now()
+    date_str = now.strftime("%Y-%m-%d_%H-%M-%S")
+    dict_sweep['name'] = f"sweep_{model_name}_{date_str}"
 
     # Initialize the sweep
     sweep_id = wandb.sweep(

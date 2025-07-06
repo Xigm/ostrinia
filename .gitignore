@@ -5,3 +5,4 @@ logs
 /outputs
 wandb
 *.pyc
+*.html

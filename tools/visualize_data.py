@@ -709,7 +709,7 @@ if __name__ == "__main__":
     target = 'incrementing_ostrinia'
 
     # Example of using with your own data:
-    dataset = Ostrinia(root="datasets", target=target, smooth=True)
+    dataset = Ostrinia(root="datasets", target=target, smooth=True, drop_nodes=True)
 
     df = dataset.target
     mask = dataset.mask[:, :, 0]  # Transpose to match the shape of df
@@ -718,6 +718,6 @@ if __name__ == "__main__":
     df.index = pd.to_datetime(df.index)
 
     # Create visualizer with variable name
-    viz = SpatiotemporalVisualizer(df, mask, var_name=target)
+    viz = SpatiotemporalVisualizer(df, mask, var_name=target + "_dropped_nodes")
     viz.save_all_plots()
 

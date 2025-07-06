@@ -11,12 +11,24 @@ class Ostrinia(DatetimeDataset):
 
     similarity_options = {'distance'}
 
-    def __init__(self, root: str = "datasets", input_zeros: bool = True, freq=None, target="nb_ostrinia", smooth: bool = False):
-        
+    def __init__(self, 
+                 root: str = "datasets",
+                   input_zeros: bool = True,
+                     freq=None, target="nb_ostrinia",
+                       smooth: bool = False,
+                         full_normalization: bool = False,
+                          drop_nodes: bool = True,
+                            add_second_target: bool = True,
+                             delay: int = 14):
+                
         self.root = root
         self.extra_data = None
         self.target = target
         self.smooth = smooth
+        self.full_normalization = full_normalization
+        self.drop_nodes = drop_nodes
+        self.add_second_target = add_second_target
+        self.delay = delay
 
         df, dist, mask = self.load(input_zeros)
 
@@ -56,8 +68,11 @@ class Ostrinia(DatetimeDataset):
 
         df, dist, coords = self.load_raw()
 
+        if self.add_second_target:
+            df = add_increment_flag(df)
+
         # change Latitude and Longitude vars to its closes cluster (which are coords)
-        df = map_to_nearest_coords(df, coords)        
+        df = map_to_nearest_coords(df, coords)
 
         # reshape the df to be date as index and node_index as columns
         df = df.set_index('Date')
@@ -65,7 +80,10 @@ class Ostrinia(DatetimeDataset):
 
         # if smooth is True, apply a rolling mean with a window of 7
         if self.smooth:
-            df_clean = df_clean.rolling(window=7, min_periods=7).mean()
+            df_clean = df_clean.rolling(window=7, min_periods=7, center=True).mean()
+
+        if self.drop_nodes:
+            df_clean = mask_top2_node_year_max(df_clean)
 
         # compute mask for nan values
         mask = ((~np.isnan(df_clean.values)).astype('uint8'))
@@ -82,14 +100,103 @@ class Ostrinia(DatetimeDataset):
             print(df.reset_index()[duplicates][['node_index']])
         # do the same with columns trap_elevation, corn_size, incrementing_ostrinia, nb_ostrinia_new, Weather Station Changins, TempAv, TempMin, TempMax, TempGrasMin, TempSol-5, TempSoil-10, RHmoy, Prec, PrecMax, Insol, Ray, EvapTranspi, WindSpeedAb, WindSpeedmax, WaterDef, Somt, Soms
         # put them in self.extra_data which will be a dict of DataFrames
-        list_of_extra_columns = ['nb_ostrinia', 'trap_elevation', 'corn_size', 'incrementing_ostrinia', 'nb_ostrinia_new', 'Weather Station Changins', 'TempAv', 'TempMin', 'TempMax', 'TempGrasMin', 'TempSol-5', 'TempSoil-10', 'RHmoy', 'Prec', 'PrecMax', 'Insol', 'Ray', 'EvapTranspi', 'WindSpeedAb', 'WindSpeedmax', 'WaterDef', 'Somt', 'Soms']
+        list_of_extra_columns = [
+            'nb_ostrinia',
+            'trap_elevation',
+            'corn_size',
+            'incrementing_ostrinia',
+            'nb_ostrinia_new',
+            'Weather Station Changins',
+            'TempAv',
+            'TempMin',
+            'TempMax',
+            'TempGrasMin',
+            'TempSol-5',
+            'TempSoil-10',
+            'RHmoy',
+            'Prec',
+            'PrecMax',
+            'Insol',
+            'Ray',
+            'EvapTranspi',
+            'WindSpeedAb',
+            'WindSpeedmax',
+            'WaterDef',
+            'Somt',
+            'Soms',
+            # spatio temporal features
+            'Latitude_x',
+            'Longitude_x',
+            'year',
+            'month',
+        ]
+
+        if self.add_second_target:
+            list_of_extra_columns.append('increment_flag')
+
         extra_data = {}
         for element in list_of_extra_columns:
             if element != self.target:
                 extra_data[element] = df.pivot(columns='node_index', values=element)
+                extra_data[element] = extra_data[element].fillna(0)  # Fill NaN with 0 for extra data
                 if element in ['nb_ostrinia', 'incrementing_ostrinia', 'nb_ostrinia_new']:
                     # if the column is one of these, we want to impute zeros
-                    extra_data[element] = extra_data[element].rolling(window=7, min_periods=1).mean()
+                    extra_data[element] = extra_data[element].rolling(window=7, min_periods=7).mean()
+                    extra_data[element] = extra_data[element].fillna(0)
+
+
+        # if self.full_normalization is True, normalize self.target and extra_data in [nb_ostrinia, incrementing_ostrinia, nb_ostrinia_new] 
+        # by the max of each node each year
+        if self.full_normalization:
+            for col in ['nb_ostrinia', 'incrementing_ostrinia', 'nb_ostrinia_new']:
+                if col in extra_data:
+
+                    extra_data[col].index = pd.to_datetime(extra_data[col].index, format='%Y-%m-%d')
+                    yearly_max = extra_data[col].groupby(extra_data[col].index.year).transform('max')
+                    # if yearly_max is 0, we set it to 1 to avoid division by zero
+                    yearly_max[yearly_max == 0] = 1
+                    # normalize by the yearly max
+                    extra_data[col] = extra_data[col].div(yearly_max, axis=0)
+            
+            df_clean.index = pd.to_datetime(df_clean.index, format='%Y-%m-%d')
+            yearly_max = df_clean.groupby(df_clean.index.year).transform('max')
+            # if yearly_max is 0, we set it to 1 to avoid division by zero
+            yearly_max[yearly_max == 0] = 1
+            # normalize by the yearly max
+            df_clean = df_clean.div(yearly_max, axis=0)
+
+        if self.add_second_target:
+
+            df_increment = df.pivot(columns='node_index', values='increment_flag')
+            df_increment.index = pd.to_datetime(df_increment.index, format='%Y-%m-%d')
+
+            # turn nan into 0
+            df_increment = df_increment.fillna(0)
+
+            # --- inputs ----------------------------------------------------------
+            channels = {"clean": df_clean, "increment": df_increment}
+
+            # 1 — sanity check: identical date index on every channel
+            base_idx = next(iter(channels.values())).index
+            assert all(df.index.equals(base_idx) for df in channels.values())
+
+            # 2 — build the MultiIndex for columns
+            nodes      = df_clean.columns            # ['node-1', 'node-2', …]
+            first_lvl  = list(channels)              # ['clean', 'increment']
+            multi_cols = pd.MultiIndex.from_product(
+                            [first_lvl, nodes], names=["channel", "node"]
+                        )
+
+            # 3 — horizontally stack the underlying NumPy blocks
+            data_block = np.hstack([channels[k].to_numpy() for k in first_lvl])
+
+            # 4 — assemble the final DataFrame
+            df_clean = pd.DataFrame(data_block, index=base_idx, columns=multi_cols)
+
+            # optional: keep original ordering of nodes
+            df_clean = (df_clean                       # your original channel→node frame
+                        .swaplevel('channel', 'node', axis=1)
+                        .sort_index(axis=1, level=['node', 'channel']))
 
         # add as covariate the day of the year. index is a string with format YYYY-MM-DD. extract the day of the year and create an enconding 
         index = df.index
@@ -100,7 +207,7 @@ class Ostrinia(DatetimeDataset):
         # drop Weather Station Changins
         if 'Weather Station Changins' in extra_data:
             extra_data.pop('Weather Station Changins')
-
+            
         self.extra_data = extra_data
 
         return df_clean, dist, mask
@@ -168,3 +275,140 @@ def map_to_nearest_coords(df, coord_list):
 
     return df
 
+def mask_top2_node_year_max(df, return_masked=False):
+    df = df.copy()
+    df.index = pd.to_datetime(df.index)
+
+    # Extract year
+    df_years = df.copy()
+    df_years['year'] = df_years.index.year
+
+    # Compute max(abs) per (node, year)
+    max_by_node_year = (
+        df_years
+        .groupby('year')
+        .agg(lambda x: np.abs(x).max())
+        .reset_index()
+        .melt(id_vars='year', var_name='node', value_name='abs_max')
+    )
+
+    # Get top 2 node-year pairs with highest max values
+    top2 = max_by_node_year.nlargest(2, 'abs_max')[['node', 'year']]
+
+    # Apply mask
+    masked_pairs = []
+    for _, row in top2.iterrows():
+        node, year = row['node'], row['year']
+        df.loc[df.index.year == year, node] = np.nan
+        masked_pairs.append((node, year))
+
+    return (df, masked_pairs) if return_masked else df
+
+
+def _parse_pair(cell) -> tuple[float, float]:
+    """
+    Convert "2'506'873.8, 1'139'573.6" → (2506873.8, 1139573.6).
+    For any cell that
+        • is NaN / None,
+        • is a lone int/float,
+        • lacks a comma,
+    return (nan, nan) so it will be skipped.
+    """
+    # 1. missing?
+    if pd.isna(cell):
+        return (np.nan, np.nan)
+
+    # 2. numeric scalar (e.g., 0, 0.0) -> skip
+    if isinstance(cell, (int, float, np.integer, np.floating)):
+        return (np.nan, np.nan)
+
+    # 3. treat as string
+    s = str(cell).strip()
+    if ',' not in s:                # not a coordinate pair
+        return (np.nan, np.nan)
+
+    x_str, y_str = map(str.strip, s.split(',', 1))  # split only once
+
+    try:
+        x = float(x_str.replace("'", ""))           # remove apostrophes
+        y = float(y_str.replace("'", ""))
+    except ValueError:                              # parsing failed → skip
+        return (np.nan, np.nan)
+
+    return (x, y)
+
+def scale_dataframe(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Parse every cell, split into X and Y, and scale each axis to [-1, 1].
+    Cells that do not contain a valid coordinate pair remain NaN.
+    """
+    parsed   = df.map(_parse_pair)
+    x_raw    = parsed.map(lambda xy: xy[0])
+    y_raw    = parsed.map(lambda xy: xy[1])
+
+    # axis-wise extrema (NaNs ignored)
+    x_min, x_max = x_raw.min().min(), x_raw.max().max()
+    y_min, y_max = y_raw.min().min(), y_raw.max().max()
+
+    # avoid division by zero if all valid values are identical
+    if x_max > x_min:
+        x_scaled = 2 * (x_raw - x_min) / (x_max - x_min) - 1
+    else:
+        x_scaled = pd.DataFrame(np.nan, index=df.index, columns=df.columns)
+
+    if y_max > y_min:
+        y_scaled = 2 * (y_raw - y_min) / (y_max - y_min) - 1
+    else:
+        y_scaled = pd.DataFrame(np.nan, index=df.index, columns=df.columns)
+
+    return x_scaled, y_scaled
+
+
+def add_increment_flag(df: pd.DataFrame,
+                       cum_col: str = "incrementing_ostrinia",
+                       flag_col: str = "increment_flag") -> pd.DataFrame:
+    """
+    Append a binary flag indicating where the cumulative count increases.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input data‐frame that already contains the cumulative‐sum column.
+    cum_col : str, default "incrementing_ostrinia"
+        Name of the cumulative‐sum column.
+    flag_col : str, default "increment_flag"
+        Name of the flag column to be created.
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of *df* with the additional flag column.
+    """
+    out = df.copy()
+
+    # Detect changes, then shift one row upward so the flag appears earlier
+    changes = out[cum_col].diff().fillna(0).ne(0)
+    out[flag_col] = changes.shift(-1, fill_value=False).astype(int)
+
+    return out
+
+def prepare_daily(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    1. Ensure datetime64[ns] dtype,
+    2. Remove any time-zone offset,
+    3. Floor to the day,
+    4. Drop or aggregate duplicates.
+    """
+    idx = pd.to_datetime(df.index, errors="raise")        # 1
+    idx = idx.tz_localize(None, ambiguous="raise")        # 2
+    idx = idx.floor("D")                                  # 3
+    df = df.copy()
+    df.index = idx
+
+    # 4 — pick ONE of the following strategies
+    # (a) keep the last occurrence
+    df = df[~df.index.duplicated(keep="last")]
+    # (b) or aggregate explicitly:
+    # df = df.groupby(level=0).mean()
+
+    return df

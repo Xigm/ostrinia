@@ -1,0 +1,7 @@
+
+name: gru
+hparams:
+  hidden_size: 16
+  n_layers: 1
+  activation: 'elu'
+  dropout: 0.2

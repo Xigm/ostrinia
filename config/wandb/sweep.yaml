@@ -1,14 +1,14 @@
 # @package wandb  
 sweep:
-  count: 20
+  count: 100
   method: random
   metric:
     name: val_loss
     goal: minimize
   parameters:
     hidden_size:
-      min: 2
-      max: 16
+      min: 16
+      max: 32
     n_layers:
       values: [1, 2]
     lr:
@@ -16,12 +16,14 @@ sweep:
       min: 0.0001
       max: 0.01
     epochs:
-      distribution: uniform
-      min: 10
-      max: 20
+      distribution: int_uniform
+      min:  20
+      max:  50
     dropout:
-      values: [0.1, 0.2, 0.3]
+      values: [0.0, 0.1, 0.2, 0.3]
     weight_decay:
       values: [0.0001, 0.0005, 0.001]
     grad_clip_val:
       values: [1, 3, 5]
+    # loss_fn:
+    #   values: ['mape', 'mae']
