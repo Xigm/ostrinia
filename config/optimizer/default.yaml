@@ -17,4 +17,4 @@ lr_scheduler:
 batch_size: 32
 num_workers: 4
 loss_fn: mae
-lambda: 1.0
+alpha: 1.0

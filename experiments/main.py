@@ -161,22 +161,49 @@ def main(cfg: DictConfig):
     # predictor                            #
     ########################################
 
-    if "loss_fn" in wandb.config.keys():
-        cfg.optimizer.loss_fn = wandb.config['loss_fn']
+    if "loss_fn" in wandb.config:
+        cfg.optimizer.loss_fn = wandb.config["loss_fn"]
         print(Fore.GREEN + f"Updated loss function: {cfg.optimizer.loss_fn}")
-        
-    if cfg.optimizer.loss_fn == 'mae':
-        loss_fn = torch_metrics.MaskedMAE(compute_on_step=True)
-    elif cfg.optimizer.loss_fn == 'mse':
-        loss_fn = torch_metrics.MaskedMSE(compute_on_step=True)
-    elif cfg.optimizer.loss_fn == 'nmse':
-        loss_fn = MaskedNMSE()
 
+    if cfg.optimizer.loss_fn == "mae":
+        base_loss_fn = torch_metrics.MaskedMAE(compute_on_step=True)
+    elif cfg.optimizer.loss_fn == "mse":
+        base_loss_fn = torch_metrics.MaskedMSE(compute_on_step=True)
+    elif cfg.optimizer.loss_fn == "nmse":
+        base_loss_fn = MaskedNMSE()
+    else:
+        raise ValueError(f"Unknown loss type: {cfg.optimizer.loss_fn}")
+
+    loss_fn = base_loss_fn           # default when there is just one target
+
+    # --- add the second-target head (regression + classification) -----------------
     if cfg.dataset.add_second_target:
-        categorical_loss = MaskedCategoricalCrossEntropy()
 
-        loss_fn = lambda x, y, mask: loss_fn(x[:, :, 0], y[:, :, 0], mask) + \
-                                    cfg.optimizer.alpha * categorical_loss(x[:, :, 1:], y[:, :, 1], mask)
+        alpha = cfg.optimizer.alpha               # cache for speed/readability
+
+        def combined_loss(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+            """
+            x, y shape: (B, C, T, F)   – last dim F = 1 (regression) + K (classes)
+            """
+            # regression on feature 0
+            reg_loss = base_loss_fn.metric_fn(x[..., 0], y[..., 0])
+
+            # classification on features 1 … K
+            logits  = x[..., 1:]                 # (B, C, T, K)
+            targets = y[..., 1].long()           # (B, C, T)
+
+            # flatten everything *except* the class dimension so F.cross_entropy sees (N, K)
+            cls_loss = torch.nn.functional.cross_entropy(
+                logits.reshape(-1, logits.size(-1)),
+                targets.reshape(-1)
+            )
+
+            return reg_loss + alpha * cls_loss
+
+        # wrap in the masked-metric adaptor (if you need NaN/∞ masking)
+        loss_fn = torch_metrics.convert_to_masked_metric(
+            combined_loss, mask_nans=True, mask_inf=True
+        )
 
     log_list = cfg.dataset.log_metrics
 

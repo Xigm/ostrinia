@@ -24,7 +24,7 @@ class GRUGCN(BaseModel):
 
         self.input_encode = MLP(input_size + exog_size, hidden_size, hidden_size, dropout=dropout)
         self.gru = nn.GRU(hidden_size, hidden_size, n_layers_rnn, batch_first=True, dropout=dropout)
-        self.fc = MLP(hidden_size, output_size * horizon, dropout=dropout)
+        self.fc = MLP(hidden_size, (output_size+1) * horizon, dropout=dropout)
 
         self.diff_conv = nn.ModuleList()
         for _ in range(n_layers_gnn):
@@ -79,7 +79,7 @@ class GRUGCN(BaseModel):
         x = self.fc(x)
 
         # rearrange output to match the expected shape
-        x = einops.rearrange(x, 'b n h -> b h n 1')
+        x = einops.rearrange(x, 'b n (h f) -> b h n f', h=self.horizon, f=self.output_size+1)
 
         return x
                 
