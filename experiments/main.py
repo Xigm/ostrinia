@@ -22,6 +22,8 @@ from numpy import concatenate, isnan, nan_to_num
 from colorama import Fore
 from extras.nmse_loss import MaskedNMSE
 
+from tsl.data.batch_map import BatchMap, BatchMapItem
+
 
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -94,6 +96,11 @@ def main(cfg: DictConfig):
             dataset.extra_data[key] = nan_to_num(covariate)
 
             u.append(dataset.extra_data[key].astype(float)[:, :, None])  # add a new axis to the covariates
+
+        if cfg.dataset.add_second_target:
+            # add the increment flag as a covariate
+            u.append(dataset.flags["increment_flag"].astype(float).to_numpy()[..., None])
+
         covariates.update(u=concatenate(u, axis=-1))
     else:
         covariates = None
@@ -109,7 +116,21 @@ def main(cfg: DictConfig):
     input_size = torch_dataset.n_channels
 
     torch_dataset.add_exogenous("enable_mask", dataset.mask.astype(float))
-    
+
+    if cfg.dataset.add_second_target:
+        torch_dataset.add_covariate(name="second_target",
+                                      value=dataset.flags["increment_flag"].astype(float),
+                                      pattern="t n",
+                                      add_to_input_map=True,
+                                      synch_mode='horizon',
+                                      preprocess=False,
+                                      convert_precision=True)
+        
+        # torch_dataset.update_target_map(BatchMap(
+        #          keys='second_target')
+        # )
+
+
     scale_axis = (0,) if cfg.get('scale_axis') == 'node' else (0, 1)
     transform = {
         'target': StandardScaler(axis=scale_axis),
@@ -147,7 +168,7 @@ def main(cfg: DictConfig):
     model_kwargs = dict(n_nodes=torch_dataset.n_nodes,
                         input_size=input_size + 1 + len(u) if covariates is not None else 0,
                         exog_size= len(u) + 1 if cfg.model.name == "arimax" else 0,  # +1 for the mask
-                        output_size=torch_dataset.n_channels,
+                        output_size=torch_dataset.n_channels + 2 if cfg.dataset.add_second_target else torch_dataset.n_channels,
                         weighted_graph=torch_dataset.edge_weight is not None,
                         embedding_cfg=cfg.get('embedding'), #### changed from None to embedding_cfg
                         horizon=torch_dataset.horizon,
@@ -181,29 +202,14 @@ def main(cfg: DictConfig):
 
         alpha = cfg.optimizer.alpha               # cache for speed/readability
 
-        def combined_loss(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-            """
-            x, y shape: (B, C, T, F)   – last dim F = 1 (regression) + K (classes)
-            """
-            # regression on feature 0
-            reg_loss = base_loss_fn.metric_fn(x[..., 0], y[..., 0])
-
-            # classification on features 1 … K
-            logits  = x[..., 1:]                 # (B, C, T, K)
-            targets = y[..., 1].long()           # (B, C, T)
-
-            # flatten everything *except* the class dimension so F.cross_entropy sees (N, K)
-            cls_loss = torch.nn.functional.cross_entropy(
-                logits.reshape(-1, logits.size(-1)),
-                targets.reshape(-1)
-            )
-
-            return reg_loss + alpha * cls_loss
-
         # wrap in the masked-metric adaptor (if you need NaN/∞ masking)
-        loss_fn = torch_metrics.convert_to_masked_metric(
-            combined_loss, mask_nans=True, mask_inf=True
+        loss_fn_classification = torch_metrics.convert_to_masked_metric(
+            torch.nn.functional.cross_entropy, mask_nans=True, mask_inf=True
         )
+
+        loss_fn = {"loss_regression": base_loss_fn,
+                   "loss_classification": loss_fn_classification,
+                   "alpha": alpha}
 
     log_list = cfg.dataset.log_metrics
 

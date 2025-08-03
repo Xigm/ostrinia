@@ -30,6 +30,9 @@ class Ostrinia(DatetimeDataset):
         self.add_second_target = add_second_target
         self.delay = delay
 
+        if add_increment_flag:
+            self.flags = {'increment_flag': None}
+
         df, dist, mask = self.load(input_zeros)
 
         super().__init__(target=df,
@@ -40,6 +43,7 @@ class Ostrinia(DatetimeDataset):
                          name="Ostrinia")
 
         self.add_covariate('dist', dist, pattern='n n')
+
 
     def load_raw(self):
 
@@ -167,36 +171,40 @@ class Ostrinia(DatetimeDataset):
 
         if self.add_second_target:
 
-            df_increment = df.pivot(columns='node_index', values='increment_flag')
-            df_increment.index = pd.to_datetime(df_increment.index, format='%Y-%m-%d')
+            # df_increment = df.pivot(columns='node_index', values='increment_flag')
+            # df_increment.index = pd.to_datetime(df_increment.index, format='%Y-%m-%d')
 
-            # turn nan into 0
-            df_increment = df_increment.fillna(0)
+            # # turn nan into 0
+            # df_increment = df_increment.fillna(0)
 
-            # --- inputs ----------------------------------------------------------
-            channels = {"clean": df_clean, "increment": df_increment}
+            # # --- inputs ----------------------------------------------------------
+            # channels = {"clean": df_clean, "increment": df_increment}
 
-            # 1 — sanity check: identical date index on every channel
-            base_idx = next(iter(channels.values())).index
-            assert all(df.index.equals(base_idx) for df in channels.values())
+            # # 1 — sanity check: identical date index on every channel
+            # base_idx = next(iter(channels.values())).index
+            # assert all(df.index.equals(base_idx) for df in channels.values())
 
-            # 2 — build the MultiIndex for columns
-            nodes      = df_clean.columns            # ['node-1', 'node-2', …]
-            first_lvl  = list(channels)              # ['clean', 'increment']
-            multi_cols = pd.MultiIndex.from_product(
-                            [first_lvl, nodes], names=["channel", "node"]
-                        )
+            # # 2 — build the MultiIndex for columns
+            # nodes      = df_clean.columns            # ['node-1', 'node-2', …]
+            # first_lvl  = list(channels)              # ['clean', 'increment']
+            # multi_cols = pd.MultiIndex.from_product(
+            #                 [first_lvl, nodes], names=["channel", "node"]
+            #             )
 
-            # 3 — horizontally stack the underlying NumPy blocks
-            data_block = np.hstack([channels[k].to_numpy() for k in first_lvl])
+            # # 3 — horizontally stack the underlying NumPy blocks
+            # data_block = np.hstack([channels[k].to_numpy() for k in first_lvl])
 
-            # 4 — assemble the final DataFrame
-            df_clean = pd.DataFrame(data_block, index=base_idx, columns=multi_cols)
+            # # 4 — assemble the final DataFrame
+            # df_clean = pd.DataFrame(data_block, index=base_idx, columns=multi_cols)
 
-            # optional: keep original ordering of nodes
-            df_clean = (df_clean                       # your original channel→node frame
-                        .swaplevel('channel', 'node', axis=1)
-                        .sort_index(axis=1, level=['node', 'channel']))
+            # # optional: keep original ordering of nodes
+            # df_clean = (df_clean                       # your original channel→node frame
+            #             .swaplevel('channel', 'node', axis=1)
+            #             .sort_index(axis=1, level=['node', 'channel']))
+
+            # add to extra elements
+            self.flags['increment_flag'] = df.pivot(columns='node_index', values='increment_flag')
+            self.flags['increment_flag'] = self.flags['increment_flag'].fillna(0)  # Fill NaN with 0 for increment_flag
 
         # add as covariate the day of the year. index is a string with format YYYY-MM-DD. extract the day of the year and create an enconding 
         index = df.index
