@@ -1,5 +1,6 @@
 import torch
 import hydra
+from zoneinfo import ZoneInfo
 from omegaconf import DictConfig, OmegaConf
 import wandb
 from tsl.data import SpatioTemporalDataset, SpatioTemporalDataModule
@@ -35,6 +36,11 @@ import sys
 from colorama import Fore, Style, init
 init()
 
+# Register the custom resolver
+OmegaConf.register_resolver(
+    "now", 
+    lambda fmt: datetime.datetime.now(tz=ZoneInfo('Europe/Berlin')).strftime(fmt)
+)
 
 def get_model(name):
     if name == 'dcrnn':
