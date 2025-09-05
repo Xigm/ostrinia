@@ -7,7 +7,7 @@ sweep:
     goal: minimize
   parameters:
     hidden_size:
-      min: 16
+      min: 4
       max: 32
     n_layers:
       values: [1, 2]

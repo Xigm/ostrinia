@@ -11,7 +11,7 @@ from datasets.ostrinia import Ostrinia
 from models.dcrnn import DCRNNModel
 from models.gru import GRU
 from models.grugcn import GRUGCN
-from models.arimax import ARIMAX
+from models.arimax import fit_arimax, ARIMAXWrapper
 from extras.predictor import WrapPredictor, WrapPredictorDoubleTarget
 from extras.metrics_logging import MetricsLogger
 from extras.callbacks import Wandb_callback, MetricsHistory
@@ -40,8 +40,9 @@ def get_model(name):
         return persistent
     elif name == 'grugcn':
         return GRUGCN
-    elif name == "arimax":
-        return ARIMAX
+    elif name == 'arimax':
+        print("Using ARIMAX model")
+        return None
     else:
         raise NotImplementedError(f"Model {name} is not implemented.")
     
@@ -165,6 +166,7 @@ def main(cfg: DictConfig):
     ######################################
     model = get_model(cfg.model.name)
 
+ 
     model_kwargs = dict(n_nodes=torch_dataset.n_nodes,
                         input_size=input_size + 1 + len(u) if covariates is not None else 0,
                         exog_size= len(u) + 1 if cfg.model.name == "arimax" else 0,  # +1 for the mask
@@ -174,7 +176,8 @@ def main(cfg: DictConfig):
                         horizon=torch_dataset.horizon,
                         add_second_target=cfg.dataset.add_second_target)
     
-    model.filter_model_args_(model_kwargs)
+    if model is not None:
+        model.filter_model_args_(model_kwargs)
 
     model_kwargs.update(cfg.model.hparams)
 
@@ -203,9 +206,7 @@ def main(cfg: DictConfig):
         alpha = cfg.optimizer.alpha               # cache for speed/readability
 
         # wrap in the masked-metric adaptor (if you need NaN/∞ masking)
-        loss_fn_classification = torch_metrics.convert_to_masked_metric(
-            torch.nn.functional.cross_entropy, mask_nans=True, mask_inf=True
-        )
+        loss_fn_classification = MaskedCategoricalCrossEntropy(mask_nans=True, mask_inf=True)
 
         loss_fn = {"loss_regression": base_loss_fn,
                    "loss_classification": loss_fn_classification,
@@ -225,13 +226,16 @@ def main(cfg: DictConfig):
         scheduler_class = scheduler_kwargs = None
 
     # setup predictor
-    if cfg.dataset.add_second_target:
+    if cfg.model.name == "arimax":
+        predictor_fn = ARIMAXWrapper
+    elif cfg.dataset.add_second_target:
         predictor_fn = WrapPredictorDoubleTarget
     else:
         predictor_fn = WrapPredictor
 
     predictor = predictor_fn(
         model_class=model,
+        n_nodes=torch_dataset.n_nodes,
         model_kwargs=model_kwargs,
         optim_class=getattr(torch.optim, cfg.optimizer.name),
         optim_kwargs=dict(cfg.optimizer.hparams),
@@ -293,7 +297,9 @@ def main(cfg: DictConfig):
                         "d": cfg.model.hparams.d,
                         "q": cfg.model.hparams.q,
                         "n_exog": len(u) + 1 if covariates is not None else 0,  # +1 for the mask
-                        "include_constant": cfg.model.hparams.include_constant,
+                        "trend": cfg.model.hparams.trend,
+                        "enforce_stationarity": cfg.model.hparams.enforce_stationarity,
+                        "enforce_invertibility": cfg.model.hparams.enforce_invertibility,
                         "dataset": cfg.dataset.name,
                         "epochs": cfg.epochs,
                         "window": cfg.dataset.window,
@@ -307,39 +313,76 @@ def main(cfg: DictConfig):
         log_metrics=log_list,
     )
 
-    trainer = Trainer(max_epochs=cfg.epochs,
-                      limit_train_batches=cfg.train_batches,
-                      default_root_dir=cfg.run_dir,
-                      logger=exp_logger,  # Disable default logger
-                      accelerator='gpu' if torch.cuda.is_available() else 'cpu',
-                    #   devices=,
-                      gradient_clip_val=cfg.grad_clip_val,
-                      callbacks=[early_stop_callback, checkpoint_callback, wandb_logger_callback])
-
-    load_model_path = cfg.get('load_model_path')
-    if load_model_path is not None:
-        predictor.load_model(load_model_path)
-    elif cfg.model.name == 'persistent':
-        pass
+    if cfg.model.name != "arimax":
+        trainer = Trainer(max_epochs=cfg.epochs,
+                          limit_train_batches=cfg.train_batches,
+                          default_root_dir=cfg.run_dir,
+                          logger=exp_logger,  # Disable default logger
+                          accelerator='gpu' if torch.cuda.is_available() else 'cpu',
+                          gradient_clip_val=cfg.grad_clip_val,
+                          callbacks=[early_stop_callback, checkpoint_callback, wandb_logger_callback])
     else:
-        trainer.fit(predictor, train_dataloaders=data_module.train_dataloader(),
-                    val_dataloaders=data_module.val_dataloader())
-        predictor.load_model(checkpoint_callback.best_model_path)
+
+        import numpy as np
+
+        all_features, all_targets = [], []
+        train_dataloader = data_module.train_dataloader()
+
+        for batch in train_dataloader:
+            X_batch, y_batch = batch.input, batch.target
+            # mask??
+            if cfg.dataset.add_covariates:
+                # concatenate the mask to the covariates
+                x = torch.concatenate([X_batch.x, X_batch.u], axis=-1)
+            else:
+                x = X_batch.x
+            all_features.append(x.numpy())
+            all_targets.append(y_batch.y.numpy())
+
+        X = np.concatenate(all_features, axis=0)
+        y = np.concatenate(all_targets, axis=0)
+
+        model = fit_arimax(
+            y_tr = y.reshape(-1, torch_dataset.n_nodes),  # reshape to 1D array
+            X_tr = X[:, -1].reshape(-1, torch_dataset.n_nodes, X.shape[-1]),
+            spec = cfg.model.hparams,
+            n_nodes = torch_dataset.n_nodes
+        )
+        print("ARIMAX model fitted.")
+
+        predictor.arimax_models = model  # set the fitted models
+        predictor.horizon = torch_dataset.horizon
+        predictor.delay = torch_dataset.delay
+
+    if cfg.model.name != "arimax":
+        load_model_path = cfg.get('load_model_path')
+        if load_model_path is not None:
+            predictor.load_model(load_model_path)
+        elif cfg.model.name == 'persistent':
+            pass
+        else:
+            trainer.fit(predictor, train_dataloaders=data_module.train_dataloader(),
+                        val_dataloaders=data_module.val_dataloader())
+            predictor.load_model(checkpoint_callback.best_model_path)
 
     ########################################
     # testing                              #
     ########################################
 
     predictor.freeze()
-    trainer.test(predictor, dataloaders=data_module.test_dataloader())
+
+    if cfg.model.name != "arimax":
+        trainer.test(predictor, dataloaders=data_module.test_dataloader())
     
     exp_logger.finalize('success')
-    
+
     plot_predictions_test(
         predictor=predictor,
         data_module=data_module,
         run_dir=cfg.run_dir,
+        model_type= "arimax" if cfg.model.name == "arimax" else "dl",
         log_metrics=log_list,
+        delay=cfg.dataset.delay,
         wandb_run=run,
     )
     

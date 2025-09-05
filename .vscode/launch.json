@@ -8,8 +8,8 @@
         "request": "launch",
         // Equivalente a: python -m experiments.main
 
-        "module": "experiments.main",
-        // "module": "experiments.sweep",
+        // "module": "experiments.main",
+        "module": "experiments.sweep",
         // "module": "tools.create_dist_matrix",
       //  "module": "tools.visualize_data",
         // "module": "tools.check_slopes",
@@ -24,7 +24,7 @@
         },
         "justMyCode": false,
         "args": [
-          "model=grugcn",
+          "model=dcrnn",
           "dataset=ostrinia"
         ]
       }

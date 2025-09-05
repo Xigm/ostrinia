@@ -227,6 +227,12 @@ class DCRNNModel(BaseModel):
             h = h[-1]  # [batch, N, hidden_size]
             y_pred = self.readout(h)
             y_pred = einops.rearrange(y_pred, "b n t -> b t n 1")
+            # last two slices of t are integers to check the slope, if add_second_target is True. get them and concatenate along last dim
+            if y_pred.shape[1] != self.horizon:
+                y_pred_1 = y_pred[:, :self.horizon, :, :]
+                y_pred_2 = y_pred[:, self.horizon:, :, :]
+                y_pred = torch.cat((y_pred_1, y_pred_2.transpose(1,3)), dim=-1)
+
 
         if self.use_final_relu:
             # if self.training:

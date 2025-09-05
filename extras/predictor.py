@@ -2,7 +2,8 @@ from tsl.engines import Predictor
 from typing import Optional, Callable, Mapping, Type, Union, List, Dict
 from torchmetrics import Metric
 from torch import nn, Tensor
-
+from torch.nn import functional as F
+import einops
 
 class WrapPredictor(Predictor):
     """
@@ -167,7 +168,7 @@ class WrapPredictor(Predictor):
         self.log_loss('val', val_loss, batch_size=batch.batch_size)
         return val_loss
     
-    def test_step(self, batch: Union[Tensor, Dict[str, Tensor]], batch_idx: int = 0) -> Union[Tensor, Dict[str, Tensor]]:
+    def test_step(self, batch: Union[Tensor, Dict[str, Tensor]], _batch_idx: int = 0) -> Union[Tensor, Dict[str, Tensor]]:
 
         # Compute outputs and rescale
         y_hat = self.predict_batch(batch, preprocess=False,
@@ -196,6 +197,7 @@ class WrapPredictorDoubleTarget(Predictor):
                  scale_target: bool = False,
                  metrics: Optional[Mapping[str, Metric]] = None,
                  warm_up: int = 5,
+                 n_nodes: int = 1,
                  *,
                  model_class: Optional[Type] = None,
                  model_kwargs: Optional[Mapping] = None,
@@ -308,19 +310,19 @@ class WrapPredictorDoubleTarget(Predictor):
         y = y_loss = batch['y']
 
         # mask increment has to be [B, T, N, 2] shape, where the last dimension is the binary flag
-        mask_increment = mask.repeat(1, 1, 1, 2) if mask is not None else None
-        mask_increment = mask_increment.squeeze() 
+        # mask_increment = mask.repeat(1, 1, 1, 2) if mask is not None else None
+        # mask_increment = mask_increment.squeeze() 
 
         # flag increment is a binary flag, it has to be converted to one hot encoding
-        flag_increment = nn.functional.one_hot(flag_increment.long(), num_classes=2).float()
+        # flag_increment = nn.functional.one_hot(flag_increment.long(), num_classes=2).float()
 
         # Compute predictions and compute loss
         y_hat_loss = self.predict_batch(batch, preprocess=False,
                                              postprocess=not self.scale_target)
         y_hat = y_hat_loss.detach()
 
-        y_hat_loss_regression = y_hat_loss[..., :1]  # Assuming the last channel is the second target
-        y_hat_loss_second_target = y_hat_loss[..., 1:]  # Assuming the second target is the first channel
+        y_hat_loss_regression = y_hat_loss[..., :y.shape[-1]]  # Assuming the last channel is the second target
+        y_hat_loss_second_target = y_hat_loss[..., y.shape[-1]:]  # Assuming the second target is the first channel
 
         # Scale target and output, eventually
         if self.scale_target:
@@ -328,7 +330,7 @@ class WrapPredictorDoubleTarget(Predictor):
             y_hat = batch.transform['y'].inverse_transform(y_hat)
 
         loss_1 = self.loss_fn(y_hat_loss_regression, y_loss, mask)
-        loss_2 = self.loss_fn_classification(y_hat_loss_second_target, flag_increment, mask_increment)
+        loss_2 = self.loss_fn_classification(y_hat_loss_second_target, flag_increment, mask)
 
         loss = loss_1 + self.alpha * loss_2
 
@@ -346,8 +348,8 @@ class WrapPredictorDoubleTarget(Predictor):
         mask = batch.get('mask')
 
         # mask increment has to be [B, T, N, 2] shape, where the last dimension is the binary flag
-        mask_increment = mask.repeat(1, 1, 1, 2) if mask is not None else None
-        mask_increment = mask_increment.squeeze()
+        # mask_increment = mask.repeat(1, 1, 1, 2) if mask is not None else None
+        # mask_increment = mask_increment.squeeze()
 
         # flag increment is a binary flag, it has to be converted to one hot encoding
         flag_increment = nn.functional.one_hot(flag_increment.long(), num_classes=2).float()
@@ -367,7 +369,7 @@ class WrapPredictorDoubleTarget(Predictor):
 
         # Compute loss
         val_loss_1 = self.loss_fn(y_hat_loss_regression, y_loss, mask)
-        val_loss_2 = self.loss_fn_classification(y_hat_loss_second_target, flag_increment, mask_increment)
+        val_loss_2 = self.loss_fn_classification(y_hat_loss_second_target, flag_increment, mask)
 
         val_loss = val_loss_1 + self.alpha * val_loss_2
 
@@ -378,29 +380,36 @@ class WrapPredictorDoubleTarget(Predictor):
         return val_loss
     
     def test_step(self, batch: Union[Tensor, Dict[str, Tensor]], batch_idx: int = 0) -> Union[Tensor, Dict[str, Tensor]]:
-
-        # Compute outputs and rescale
-        y_hat = self.predict_batch(batch, preprocess=False,
-                                        postprocess=True)
-
-        y, mask = batch.y, batch.get('mask')
+        y = y_loss = batch.y
         flag_increment = batch.get('second_target', None)
-
-        # mask increment has to be [B, T, N, 2] shape, where the last dimension is the binary flag
-        mask_increment = mask.repeat(1, 1, 1, 2)
-        mask_increment = mask_increment.squeeze()
+        mask = batch.get('mask')
 
         # flag increment is a binary flag, it has to be converted to one hot encoding
         flag_increment = nn.functional.one_hot(flag_increment.long(), num_classes=2).float()
 
-        test_loss_1 = self.loss_fn(y_hat[..., :1], y, mask)
-        test_loss_2 = self.loss_fn_classification(y_hat[..., 1:], flag_increment, mask_increment)
+        # Compute predictions
+        y_hat_loss = self.predict_batch(batch, preprocess=False,
+                                        postprocess=not self.scale_target)
+        y_hat = y_hat_loss.detach()
+
+        y_hat_loss_regression = y_hat_loss[..., :1]  # First channel is the main target
+        y_hat_loss_second_target = y_hat_loss[..., 1:]  # Second channel is the binary flag
+
+        # Scale target and output, eventually
+        if self.scale_target:
+            y_loss = batch.transform['y'].transform(y)
+            y_hat = batch.transform['y'].inverse_transform(y_hat)
+
+        # Compute loss
+        test_loss_1 = self.loss_fn(y_hat_loss_regression, y_loss, mask)
+        test_loss_2 = self.loss_fn_classification(y_hat_loss_second_target, flag_increment, mask)
+
         test_loss = test_loss_1 + self.alpha * test_loss_2
 
         # Logging
-        self.test_metrics.update(y_hat.detach()[..., :1], y, mask)
+        self.test_metrics.update(y_hat[..., :1], y, mask)
         self.log_metrics(self.test_metrics, batch_size=batch.batch_size)
         self.log_loss('test', test_loss, batch_size=batch.batch_size)
-
+        
         return test_loss
     

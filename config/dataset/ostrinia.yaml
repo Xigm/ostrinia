@@ -19,6 +19,6 @@ log_metrics: ["mae", "mre", "mse", "loss"]
 add_covariates: true
 smooth: true
 sampling: 2
-full_normalization: false
+full_normalization: true
 drop_nodes: false
 add_second_target: true

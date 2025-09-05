@@ -22,7 +22,7 @@ run_dir: logs/${model.name}/${dataset.name}/${now:%Y-%m-%d}/${now:%H-%M-%S}
 run_name: ${now:%Y-%m-%d_%H-%M-%S}_${hydra:job.num}
 
 #### Training params ##########################################################
-epochs: 2
+epochs: 20
 patience: 10
 batch_size: 64
 train_batches: 1.0

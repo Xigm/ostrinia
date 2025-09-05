@@ -13,11 +13,13 @@ from models.gru import GRU
 from models.dcrnn import DCRNNModel
 from models.grugcn import GRUGCN
 
-from extras.predictor import WrapPredictor
+from extras.predictor import WrapPredictor, WrapPredictorDoubleTarget
 from extras.metrics_logging import MetricsLogger
 from extras.callbacks import Wandb_callback, MetricsHistory
 from extras.plots import plot_predictions_test
 from extras.nmse_loss import MaskedNMSE
+from extras.masked_categorical_CE import MaskedCategoricalCrossEntropy
+
 
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -70,7 +72,8 @@ def main(cfg: DictConfig):
     dataset = Ostrinia(root = "datasets",
                        target = cfg.dataset.target,
                        smooth = cfg.dataset.smooth,
-                       full_normalization = cfg.dataset.full_normalization)
+                       full_normalization = cfg.dataset.full_normalization,
+                       add_second_target = cfg.dataset.add_second_target)
 
 
     if cfg.dataset.add_covariates:
@@ -91,6 +94,11 @@ def main(cfg: DictConfig):
             dataset.extra_data[key] = nan_to_num(covariate)
 
             u.append(dataset.extra_data[key].astype(float)[:, :, None])  # add a new axis to the covariates
+        
+        if cfg.dataset.add_second_target:
+            # add the increment flag as a covariate
+            u.append(dataset.flags["increment_flag"].astype(float).to_numpy()[..., None])
+
         covariates.update(u=concatenate(u, axis=-1))
     else:
         covariates = None
@@ -106,6 +114,16 @@ def main(cfg: DictConfig):
     input_size = torch_dataset.n_channels
 
     torch_dataset.add_exogenous("enable_mask", dataset.mask.astype(float))
+
+    if cfg.dataset.add_second_target:
+        torch_dataset.add_covariate(name="second_target",
+                                      value=dataset.flags["increment_flag"].astype(float),
+                                      pattern="t n",
+                                      add_to_input_map=True,
+                                      synch_mode='horizon',
+                                      preprocess=False,
+                                      convert_precision=True)
+        
 
     scale_axis = (0,) if cfg.get('scale_axis') == 'node' else (0, 1)
     transform = {
@@ -144,10 +162,11 @@ def main(cfg: DictConfig):
     model_kwargs = dict(n_nodes=torch_dataset.n_nodes,
                         input_size=input_size + 1 + len(u) if covariates is not None else 0,
                         exog_size=0,
-                        output_size=torch_dataset.n_channels,
+                        output_size=torch_dataset.n_channels + 2 if cfg.dataset.add_second_target else torch_dataset.n_channels,
                         weighted_graph=torch_dataset.edge_weight is not None,
                         embedding_cfg=cfg.get('embedding'), #### changed from None to embedding_cfg
-                        horizon=torch_dataset.horizon)
+                        horizon=torch_dataset.horizon,
+                        add_second_target=cfg.dataset.add_second_target)
     
     model.filter_model_args_(model_kwargs)
 
@@ -171,14 +190,28 @@ def main(cfg: DictConfig):
         print(Fore.GREEN + f"Updated loss function: {cfg.optimizer.loss_fn}")
         
     if cfg.optimizer.loss_fn == 'mae':
-        loss_fn = torch_metrics.MaskedMAE(compute_on_step=True)
+        base_loss_fn = torch_metrics.MaskedMAE(compute_on_step=True)
     elif cfg.optimizer.loss_fn == 'mse':
-        loss_fn = torch_metrics.MaskedMSE(compute_on_step=True)
+        base_loss_fn = torch_metrics.MaskedMSE(compute_on_step=True)
     elif cfg.optimizer.loss_fn == 'nmse':
-        loss_fn = MaskedNMSE()
+        base_loss_fn = MaskedNMSE()
     elif cfg.optimizer.loss_fn == 'mape':
-        loss_fn = torch_metrics.MaskedMAPE(compute_on_step=True)
+        base_loss_fn = torch_metrics.MaskedMAPE(compute_on_step=True)
 
+    loss_fn = base_loss_fn           # default when there is just one target
+
+    # --- add the second-target head (regression + classification) -----------------
+    if cfg.dataset.add_second_target:
+
+        alpha = cfg.optimizer.alpha               # cache for speed/readability
+
+        # wrap in the masked-metric adaptor (if you need NaN/∞ masking)
+        loss_fn_classification = MaskedCategoricalCrossEntropy(mask_nans=True, mask_inf=True)
+
+        loss_fn = {"loss_regression": base_loss_fn,
+                   "loss_classification": loss_fn_classification,
+                   "alpha": alpha}
+        
     log_list = cfg.dataset.log_metrics
 
     log_metrics = MetricsLogger()
@@ -208,16 +241,21 @@ def main(cfg: DictConfig):
             print(Fore.RED + f"Key \'{key}\' not found in optimizer kwargs, skipping.")
 
     # setup predictor
-    predictor = WrapPredictor(
+    if cfg.dataset.add_second_target:
+        predictor_fn = WrapPredictorDoubleTarget
+    else:
+        predictor_fn = WrapPredictor
+
+    predictor = predictor_fn(
         model_class=model,
+        n_nodes=torch_dataset.n_nodes,
         model_kwargs=model_kwargs,
         optim_class=getattr(torch.optim, cfg.optimizer.name),
-        optim_kwargs=optimizer_kwargs,
+        optim_kwargs=dict(cfg.optimizer.hparams),
         loss_fn=loss_fn,
         metrics=metrics,
         scheduler_class=scheduler_class,
         scheduler_kwargs=scheduler_kwargs,
-        sampling = cfg.dataset.sampling # Set to -1 for no sampling,
     )
 
     exp_logger = TensorBoardLogger(save_dir=cfg.run_dir, name=cfg.run_name)

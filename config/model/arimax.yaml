@@ -4,4 +4,6 @@ hparams:
   p: 1
   d: 1
   q: 1
-  include_constant: true
+  trend: 'n'
+  enforce_stationarity: false
+  enforce_invertibility: false
